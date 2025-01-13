@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		E1F6522A2D346DED0091A7E8 /* Yams in Frameworks */ = {isa = PBXBuildFile; productRef = E1F652292D346DED0091A7E8 /* Yams */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		E183104E2D34203B0070D311 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -52,6 +56,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E1F6522A2D346DED0091A7E8 /* Yams in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -112,6 +117,7 @@
 			);
 			name = locol;
 			packageProductDependencies = (
+				E1F652292D346DED0091A7E8 /* Yams */,
 			);
 			productName = locol;
 			productReference = E183103C2D3420390070D311 /* locol.app */;
@@ -195,6 +201,9 @@
 			);
 			mainGroup = E18310332D3420390070D311;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				E1F652282D346DED0091A7E8 /* XCRemoteSwiftPackageReference "Yams" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = E183103D2D3420390070D311 /* Products */;
 			projectDirPath = "";
@@ -401,11 +410,13 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = io.aparker.locol;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -428,11 +439,13 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
 				);
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = io.aparker.locol;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -549,6 +562,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		E1F652282D346DED0091A7E8 /* XCRemoteSwiftPackageReference "Yams" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/jpsim/Yams.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 5.1.3;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		E1F652292D346DED0091A7E8 /* Yams */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E1F652282D346DED0091A7E8 /* XCRemoteSwiftPackageReference "Yams" */;
+			productName = Yams;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = E18310342D3420390070D311 /* Project object */;
 }
