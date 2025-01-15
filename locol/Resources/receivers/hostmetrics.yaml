@@ -1,0 +1,16 @@
+receivers:
+  hostmetrics:
+    collection_interval: 30s
+    scrapers:
+      process:
+        mute_process_all_errors: true
+      memory:
+      load:
+      disk:
+      network:
+      system:
+service:
+  pipelines:
+    metrics:
+      receivers:
+        - hostmetrics

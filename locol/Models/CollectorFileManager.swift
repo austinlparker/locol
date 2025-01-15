@@ -6,7 +6,7 @@ class CollectorFileManager {
     
     init() {
         self.baseDirectory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".locol")
-        self.templatesDirectory = Bundle.main.resourceURL?.appendingPathComponent("Templates") ?? baseDirectory.appendingPathComponent("Templates")
+        self.templatesDirectory = Bundle.main.resourceURL?.appendingPathComponent("templates") ?? baseDirectory.appendingPathComponent("templates")
         
         try? createDirectoryStructure()
     }
@@ -14,11 +14,10 @@ class CollectorFileManager {
     private func createDirectoryStructure() throws {
         // Create base directories
         try FileManager.default.createDirectory(at: baseDirectory.appendingPathComponent("collectors"), withIntermediateDirectories: true)
-        try FileManager.default.createDirectory(at: baseDirectory.appendingPathComponent("templates"), withIntermediateDirectories: true)
         
         // Copy default templates if they don't exist
-        if let defaultConfig = Bundle.main.url(forResource: "defaultConfig", withExtension: "yaml") {
-            let destPath = baseDirectory.appendingPathComponent("templates/default.yaml")
+        if let defaultConfig = Bundle.main.url(forResource: "defaultConfig", withExtension: "yaml", subdirectory: "templates") {
+            let destPath = baseDirectory.appendingPathComponent("collectors/default.yaml")
             if !FileManager.default.fileExists(atPath: destPath.path) {
                 try FileManager.default.copyItem(at: defaultConfig, to: destPath)
             }
@@ -43,22 +42,26 @@ class CollectorFileManager {
     }
     
     func listConfigTemplates() throws -> [URL] {
-        let templateDir = baseDirectory.appendingPathComponent("templates")
-        let contents = try FileManager.default.contentsOfDirectory(
-            at: templateDir,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        )
-        return contents.filter { $0.pathExtension == "yaml" }
+        // Look for templates in the bundle's templates directory
+        if let bundleTemplatesPath = Bundle.main.resourceURL?.appendingPathComponent("templates") {
+            let contents = try FileManager.default.contentsOfDirectory(
+                at: bundleTemplatesPath,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            )
+            return contents.filter { $0.pathExtension == "yaml" }
+        }
+        return []
     }
     
-    func applyTemplate(named templateName: String, to collectorConfigPath: String) throws {
-        let templatePath = baseDirectory.appendingPathComponent("templates").appendingPathComponent(templateName)
-        if !FileManager.default.fileExists(atPath: templatePath.path) {
+    func applyConfigTemplate(named templateName: String, to collectorConfigPath: String) throws {
+        guard let templateURL = Bundle.main.url(forResource: templateName.replacingOccurrences(of: ".yaml", with: ""), 
+                                              withExtension: "yaml",
+                                              subdirectory: "templates") else {
             throw FileError.templateNotFound
         }
         
-        let templateContent = try String(contentsOf: templatePath, encoding: .utf8)
+        let templateContent = try String(contentsOf: templateURL, encoding: .utf8)
         try writeConfig(templateContent, to: collectorConfigPath)
     }
     

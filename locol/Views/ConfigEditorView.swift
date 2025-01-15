@@ -7,57 +7,123 @@
 
 import SwiftUI
 
+struct SidebarSectionHeader: View {
+    let title: String
+    
+    var body: some View {
+        Text(title)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(.secondary)
+            .textCase(.uppercase)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+    }
+}
+
 struct ConfigEditorView: View {
     @ObservedObject var manager: CollectorManager
+    @StateObject private var snippetManager = ConfigSnippetManager()
     let collectorId: UUID
     
     @State private var configText: String = ""
-    @State private var selectedTemplate: URL?
-    @State private var showingTemplateAlert = false
+    @State private var showingSnippetError = false
+    @State private var errorMessage = ""
+    @State private var previewSnippet: ConfigSnippet?
+    @State private var originalConfig: String = ""
     
     var body: some View {
         HSplitView {
-            // Template List
-            List(manager.listConfigTemplates(), id: \.self) { template in
-                HStack {
-                    Text(template.lastPathComponent)
-                        .foregroundColor(selectedTemplate == template ? .accentColor : .primary)
-                    Spacer()
+            // Left sidebar with snippets
+            VStack(spacing: 0) {
+                List {
+                    ForEach(SnippetType.allCases, id: \.self) { type in
+                        Section {
+                            if let snippetsForType = snippetManager.snippets[type], !snippetsForType.isEmpty {
+                                ForEach(snippetsForType) { snippet in
+                                    HStack {
+                                        Text(snippet.name)
+                                            .font(.system(.body))
+                                        Spacer()
+                                        if previewSnippet?.id == snippet.id {
+                                            Button(action: {
+                                                mergeSnippet(snippet)
+                                                previewSnippet = nil
+                                            }) {
+                                                Label("Apply", systemImage: "plus.circle.fill")
+                                            }
+                                            .buttonStyle(.borderless)
+                                            .labelStyle(.iconOnly)
+                                            .help("Apply snippet")
+                                            
+                                            Button(action: {
+                                                configText = originalConfig
+                                                previewSnippet = nil
+                                            }) {
+                                                Label("Cancel", systemImage: "xmark.circle.fill")
+                                            }
+                                            .buttonStyle(.borderless)
+                                            .labelStyle(.iconOnly)
+                                            .help("Cancel preview")
+                                        } else {
+                                            Label("Preview", systemImage: "plus.circle")
+                                                .labelStyle(.iconOnly)
+                                                .foregroundStyle(.secondary)
+                                        }
+                                    }
+                                    .contentShape(Rectangle())
+                                    .onTapGesture {
+                                        previewSnippetMerge(snippet)
+                                    }
+                                }
+                            } else {
+                                Text("No snippets available")
+                                    .font(.system(.body))
+                                    .foregroundStyle(.secondary)
+                            }
+                        } header: {
+                            Text(type.displayName)
+                                .font(.system(.callout, weight: .medium))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    selectedTemplate = template
-                    showingTemplateAlert = true
-                }
+                .listStyle(.sidebar)
             }
-            .frame(minWidth: 200, maxWidth: 300)
-            .listStyle(SidebarListStyle())
+            .frame(minWidth: 220, maxWidth: 300)
+            .background(Color(NSColor.controlBackgroundColor))
             
             // Editor
-            VStack {
-                YAMLEditor(text: $configText, font: .custom("Menlo", size: 12))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                
+            VStack(spacing: 0) {
+                // Toolbar
                 HStack {
+                    if previewSnippet != nil {
+                        Label("Preview Mode", systemImage: "eye")
+                            .font(.system(.body))
+                            .foregroundStyle(.secondary)
+                    }
                     Spacer()
-                    Button("Save") {
+                    Button(action: {
                         manager.updateCollectorConfig(withId: collectorId, config: configText)
+                    }) {
+                        Label("Save", systemImage: "square.and.arrow.down")
                     }
                     .keyboardShortcut("s", modifiers: .command)
                 }
-                .padding()
+                .padding(.horizontal)
+                .padding(.vertical, 8)
+                .background(Color(NSColor.controlBackgroundColor))
+                
+                Divider()
+                
+                // Editor with line numbers
+                YAMLEditor(text: $configText, font: .system(.body, design: .monospaced))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .alert("Apply Template", isPresented: $showingTemplateAlert) {
-            Button("Cancel", role: .cancel) {}
-            Button("Apply") {
-                if let template = selectedTemplate {
-                    manager.applyConfigTemplate(named: template.lastPathComponent, toCollectorWithId: collectorId)
-                    loadConfig()
-                }
-            }
+        .alert("Error", isPresented: $showingSnippetError) {
+            Button("OK", role: .cancel) {}
         } message: {
-            Text("Are you sure you want to apply this template? This will overwrite your current configuration.")
+            Text(errorMessage)
         }
         .onAppear {
             loadConfig()
@@ -66,11 +132,60 @@ struct ConfigEditorView: View {
     
     private func loadConfig() {
         guard let collector = manager.collectors.first(where: { $0.id == collectorId }) else { return }
+        
         do {
-            configText = try manager.fileManager.readConfig(from: collector.configPath)
+            let content = try String(contentsOfFile: collector.configPath, encoding: .utf8)
+            configText = content
+            originalConfig = content
+            
+            // Also load into snippet manager for merging
+            snippetManager.loadConfig(from: collector.configPath)
         } catch {
             AppLogger.shared.error("Failed to load config: \(error.localizedDescription)")
-            configText = "# Failed to load configuration"
+            // Set empty config to avoid null issues
+            configText = ""
+            originalConfig = ""
+        }
+    }
+    
+    private func previewSnippetMerge(_ snippet: ConfigSnippet) {
+        if previewSnippet?.id == snippet.id {
+            // If clicking the same snippet again, cancel preview
+            configText = originalConfig
+            previewSnippet = nil
+            return
+        }
+        
+        // Store original config if this is the first preview
+        if previewSnippet == nil {
+            originalConfig = configText
+        }
+        
+        // Show preview
+        if let currentConfig = snippetManager.currentConfig {
+            configText = snippetManager.previewSnippetMerge(snippet, into: currentConfig)
+            previewSnippet = snippet
+        }
+    }
+    
+    private func mergeSnippet(_ snippet: ConfigSnippet) {
+        do {
+            try snippetManager.mergeSnippet(snippet)
+            if let preview = snippetManager.previewConfig {
+                configText = preview
+                originalConfig = preview
+            }
+            previewSnippet = nil
+            
+            // Save to disk
+            guard let collector = manager.collectors.first(where: { $0.id == collectorId }) else { return }
+            try snippetManager.saveConfig(to: collector.configPath)
+        } catch {
+            errorMessage = "Failed to merge snippet: \(error.localizedDescription)"
+            showingSnippetError = true
+            // Revert to original on error
+            configText = originalConfig
+            previewSnippet = nil
         }
     }
 }

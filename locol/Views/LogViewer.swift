@@ -3,6 +3,7 @@ import SwiftUI
 struct LogViewer: View {
     let collector: CollectorInstance
     @ObservedObject var logger = CollectorLogger.shared
+    @State private var shouldAutoScroll = true
     
     var body: some View {
         VStack {
@@ -10,6 +11,9 @@ struct LogViewer: View {
                 Text("Logs for \(collector.name)")
                     .font(.headline)
                 Spacer()
+                Toggle("Auto-scroll", isOn: $shouldAutoScroll)
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
                 Button("Clear") {
                     logger.clearLogs()
                 }
@@ -36,12 +40,18 @@ struct LogViewer: View {
                     }
                     .padding()
                 }
-                .onChange(of: logger.logs.count) { _ in
-                    if let lastLog = logger.logs.last {
-                        proxy.scrollTo(lastLog.id, anchor: .bottom)
+                .onChange(of: CollectorLogger.shared.logs) { oldValue, newValue in
+                    if shouldAutoScroll {
+                        scrollToBottom(proxy: proxy)
                     }
                 }
             }
+        }
+    }
+    
+    private func scrollToBottom(proxy: ScrollViewProxy) {
+        if let lastLog = logger.logs.last {
+            proxy.scrollTo(lastLog.id, anchor: .bottom)
         }
     }
     

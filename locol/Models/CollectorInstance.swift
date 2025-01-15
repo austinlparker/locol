@@ -8,8 +8,14 @@ struct CollectorInstance: Codable, Identifiable {
     let configPath: String
     var commandLineFlags: String
     var isRunning: Bool
+    var pid: Int?
+    var startTime: Date?
     
-    init(id: UUID = UUID(), name: String, version: String, binaryPath: String, configPath: String, commandLineFlags: String = "", isRunning: Bool = false) {
+    var localPath: String {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".locol/collectors/\(name)").path
+    }
+    
+    init(id: UUID = UUID(), name: String, version: String, binaryPath: String, configPath: String, commandLineFlags: String = "", isRunning: Bool = false, pid: Int? = nil, startTime: Date? = nil) {
         self.id = id
         self.name = name
         self.version = version
@@ -17,5 +23,7 @@ struct CollectorInstance: Codable, Identifiable {
         self.configPath = configPath
         self.commandLineFlags = commandLineFlags
         self.isRunning = isRunning
+        self.pid = pid
+        self.startTime = startTime
     }
 } 

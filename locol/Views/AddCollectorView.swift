@@ -96,10 +96,13 @@ struct ReleaseListView: View {
                         Text("No compatible assets available.")
                             .foregroundColor(.secondary)
                             .font(.footnote)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .padding(.vertical, 8)
                     }
                 } header: {
                     Text(release.tagName)
                         .font(.headline)
+                        .foregroundColor(.primary)
                 }
             }
         }
@@ -119,6 +122,18 @@ struct AddCollectorView: View {
             Form {
                 Section {
                     TextField("Name", text: $name)
+                        .textFieldStyle(RoundedBorderTextFieldStyle())
+                        .padding(.vertical, 8)
+                    
+                    if manager.isDownloading {
+                        VStack(spacing: 8) {
+                            ProgressView(value: manager.downloadProgress)
+                            Text(manager.downloadStatus)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.vertical, 8)
+                    }
                     
                     ReleaseListView(
                         releases: manager.availableReleases,
@@ -128,8 +143,11 @@ struct AddCollectorView: View {
                             selectedRelease = release
                         }
                     )
+                    .disabled(manager.isDownloading)
                 } header: {
                     Text("New Collector")
+                        .font(.headline)
+                        .textCase(nil)
                 }
             }
             .navigationTitle("Add Collector")
@@ -138,6 +156,7 @@ struct AddCollectorView: View {
                     Button("Cancel") {
                         isPresented = false
                     }
+                    .disabled(manager.isDownloading)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Add") {
@@ -154,10 +173,10 @@ struct AddCollectorView: View {
                             name = ""
                         }
                     }
-                    .disabled(name.isEmpty || selectedAsset == nil)
+                    .disabled(name.isEmpty || selectedAsset == nil || manager.isDownloading)
                 }
             }
         }
-        .frame(width: 600, height: 400)
+        .frame(width: 600, height: 500)
     }
 } 

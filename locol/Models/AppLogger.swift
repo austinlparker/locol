@@ -1,17 +1,24 @@
 import Foundation
 import os
 
-enum LogLevel {
+enum LogLevel: Equatable {
     case debug
     case info
     case error
 }
 
-struct LogEntry: Identifiable {
+struct LogEntry: Identifiable, Equatable {
     let id = UUID()
     let timestamp: Date
     let level: LogLevel
     let message: String
+    
+    static func == (lhs: LogEntry, rhs: LogEntry) -> Bool {
+        lhs.id == rhs.id &&
+        lhs.timestamp == rhs.timestamp &&
+        lhs.level == lhs.level &&
+        lhs.message == rhs.message
+    }
 }
 
 class CollectorLogger: ObservableObject {

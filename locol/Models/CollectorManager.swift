@@ -65,25 +65,40 @@ class CollectorManager: ObservableObject {
     
     func addCollector(name: String, version: String, release: Release, asset: ReleaseAsset) {
         isDownloading = true
+        downloadStatus = "Creating collector directory..."
+        downloadProgress = 0.0
         
-        downloadManager.downloadAsset(releaseAsset: asset, name: name, version: version) { [weak self] result in
-            guard let self = self else { return }
+        do {
+            let paths = try createCollectorDirectory(name: name, version: version)
+            downloadStatus = "Downloading collector binary..."
             
-            switch result {
-            case .success((let binaryPath, let configPath)):
-                let collector = CollectorInstance(
-                    name: name,
-                    version: version,
-                    binaryPath: binaryPath,
-                    configPath: configPath
-                )
-                self.appState.addCollector(collector)
-            case .failure(let error):
-                AppLogger.shared.error("Failed to download collector: \(error.localizedDescription)")
-                // TODO: Show error to user
+            downloadManager.downloadAsset(releaseAsset: asset, name: name, version: version) { [weak self] result in
+                guard let self = self else { return }
+                
+                switch result {
+                case .success((let binaryPath, let configPath)):
+                    let collector = CollectorInstance(
+                        name: name,
+                        version: version,
+                        binaryPath: binaryPath,
+                        configPath: configPath
+                    )
+                    self.appState.addCollector(collector)
+                case .failure(let error):
+                    AppLogger.shared.error("Failed to download collector: \(error.localizedDescription)")
+                    // Clean up the directory on failure
+                    try? self.fileManager.deleteCollector(name: name)
+                }
+                
+                self.isDownloading = false
+                self.downloadProgress = 0.0
+                self.downloadStatus = ""
             }
-            
-            self.isDownloading = false
+        } catch {
+            AppLogger.shared.error("Failed to create collector directory: \(error.localizedDescription)")
+            isDownloading = false
+            downloadProgress = 0.0
+            downloadStatus = ""
         }
     }
     
@@ -108,6 +123,10 @@ class CollectorManager: ObservableObject {
             try processManager.startCollector(collector)
             var updatedCollector = collector
             updatedCollector.isRunning = true
+            updatedCollector.startTime = Date()
+            if let process = processManager.getProcess(forCollector: collector) {
+                updatedCollector.pid = Int(process.processIdentifier)
+            }
             appState.updateCollector(updatedCollector)
             // Create metrics manager when collector starts
             _ = getMetricsManager(forCollectorId: id)
@@ -123,6 +142,8 @@ class CollectorManager: ObservableObject {
         processManager.stopCollector(collector)
         var updatedCollector = collector
         updatedCollector.isRunning = false
+        updatedCollector.pid = nil
+        updatedCollector.startTime = nil
         appState.updateCollector(updatedCollector)
         metricsManagers.removeValue(forKey: id)
     }
@@ -164,13 +185,12 @@ class CollectorManager: ObservableObject {
     }
     
     func applyConfigTemplate(named templateName: String, toCollectorWithId id: UUID) {
-        guard let collector = appState.getCollector(withId: id) else { return }
+        guard let collector = collectors.first(where: { $0.id == id }) else { return }
         
         do {
-            try fileManager.applyTemplate(named: templateName, to: collector.configPath)
+            try fileManager.applyConfigTemplate(named: templateName, to: collector.configPath)
         } catch {
-            AppLogger.shared.error("Failed to apply config template: \(error.localizedDescription)")
-            // TODO: Show error to user
+            AppLogger.shared.error("Failed to apply template: \(error.localizedDescription)")
         }
     }
     
@@ -181,6 +201,37 @@ class CollectorManager: ObservableObject {
         let manager = MetricsManager()
         metricsManagers[id] = manager
         return manager
+    }
+    
+    private func createCollectorDirectory(name: String, version: String) throws -> (binaryPath: String, configPath: String) {
+        let collectorDir = fileManager.baseDirectory.appendingPathComponent("collectors").appendingPathComponent(name)
+        let binPath = collectorDir.appendingPathComponent("bin")
+        let configPath = collectorDir.appendingPathComponent("config.yaml")
+        
+        try FileManager.default.createDirectory(at: binPath, withIntermediateDirectories: true)
+        AppLogger.shared.debug("Created directory at \(binPath.path)")
+        
+        // Copy default config
+        if let defaultConfig = Bundle.main.url(forResource: "default", withExtension: "yaml", subdirectory: "templates") {
+            AppLogger.shared.debug("Found default config at \(defaultConfig.path)")
+            try FileManager.default.copyItem(at: defaultConfig, to: configPath)
+            AppLogger.shared.debug("Copied default config to \(configPath.path)")
+        } else {
+            AppLogger.shared.error("Could not find default config in bundle at templates/default.yaml")
+            // Try alternate locations
+            if let defaultConfig = Bundle.main.url(forResource: "default", withExtension: "yaml") {
+                AppLogger.shared.debug("Found default config at root: \(defaultConfig.path)")
+                try FileManager.default.copyItem(at: defaultConfig, to: configPath)
+                AppLogger.shared.debug("Copied default config to \(configPath.path)")
+            } else {
+                AppLogger.shared.error("Could not find default config anywhere in bundle")
+                // Create empty config to avoid null issues
+                try "receivers: {}\nprocessors: {}\nexporters: {}\n".write(to: configPath, atomically: true, encoding: .utf8)
+                AppLogger.shared.debug("Created empty config at \(configPath.path)")
+            }
+        }
+        
+        return (binPath.path, configPath.path)
     }
 }
 

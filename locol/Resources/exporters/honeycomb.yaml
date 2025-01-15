@@ -1,0 +1,16 @@
+exporters:
+  otlp/hny:
+    endpoint: "api.honeycomb.io:443"
+    headers:
+      "x-honeycomb-team": "yourkeyhere"
+service:
+  pipelines:
+    traces:
+      exporters:
+        - otlp/hny
+    metrics:
+      exporters:
+        - otlp/hny
+    logs:
+      exporters:
+        - otlp/hny

@@ -7,6 +7,10 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		E10DC4EA2D3753BF003EB040 /* exporters in Resources */ = {isa = PBXBuildFile; fileRef = E10DC4E62D3753BF003EB040 /* exporters */; };
+		E10DC4EB2D3753BF003EB040 /* processors in Resources */ = {isa = PBXBuildFile; fileRef = E10DC4E72D3753BF003EB040 /* processors */; };
+		E10DC4EC2D3753BF003EB040 /* receivers in Resources */ = {isa = PBXBuildFile; fileRef = E10DC4E82D3753BF003EB040 /* receivers */; };
+		E10DC4ED2D3753BF003EB040 /* templates in Resources */ = {isa = PBXBuildFile; fileRef = E10DC4E92D3753BF003EB040 /* templates */; };
 		E1F6522A2D346DED0091A7E8 /* Yams in Frameworks */ = {isa = PBXBuildFile; productRef = E1F652292D346DED0091A7E8 /* Yams */; };
 /* End PBXBuildFile section */
 
@@ -28,14 +32,34 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		E10DC4E62D3753BF003EB040 /* exporters */ = {isa = PBXFileReference; lastKnownFileType = folder; name = exporters; path = locol/Resources/exporters; sourceTree = "<group>"; };
+		E10DC4E72D3753BF003EB040 /* processors */ = {isa = PBXFileReference; lastKnownFileType = folder; name = processors; path = locol/Resources/processors; sourceTree = "<group>"; };
+		E10DC4E82D3753BF003EB040 /* receivers */ = {isa = PBXFileReference; lastKnownFileType = folder; name = receivers; path = locol/Resources/receivers; sourceTree = "<group>"; };
+		E10DC4E92D3753BF003EB040 /* templates */ = {isa = PBXFileReference; lastKnownFileType = folder; name = templates; path = locol/Resources/templates; sourceTree = "<group>"; };
 		E183103C2D3420390070D311 /* locol.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = locol.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		E183104D2D34203B0070D311 /* locolTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = locolTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E18310572D34203B0070D311 /* locolUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = locolUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		E10DC4D52D37533B003EB040 /* Exceptions for "locol" folder in "locol" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Resources/exporters/honeycomb.yaml,
+				Resources/processors/resourcedetector.yaml,
+				Resources/receivers/hostmetrics.yaml,
+				Resources/templates/default.yaml,
+			);
+			target = E183103B2D3420390070D311 /* locol */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		E183103E2D3420390070D311 /* locol */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				E10DC4D52D37533B003EB040 /* Exceptions for "locol" folder in "locol" target */,
+			);
 			path = locol;
 			sourceTree = "<group>";
 		};
@@ -80,6 +104,10 @@
 		E18310332D3420390070D311 = {
 			isa = PBXGroup;
 			children = (
+				E10DC4E62D3753BF003EB040 /* exporters */,
+				E10DC4E72D3753BF003EB040 /* processors */,
+				E10DC4E82D3753BF003EB040 /* receivers */,
+				E10DC4E92D3753BF003EB040 /* templates */,
 				E183103E2D3420390070D311 /* locol */,
 				E18310502D34203B0070D311 /* locolTests */,
 				E183105A2D34203B0070D311 /* locolUITests */,
@@ -221,6 +249,10 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E10DC4EA2D3753BF003EB040 /* exporters in Resources */,
+				E10DC4EB2D3753BF003EB040 /* processors in Resources */,
+				E10DC4EC2D3753BF003EB040 /* receivers in Resources */,
+				E10DC4ED2D3753BF003EB040 /* templates in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

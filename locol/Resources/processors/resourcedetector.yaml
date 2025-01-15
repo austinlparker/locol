@@ -1,0 +1,16 @@
+processors:
+  resourcedetection/system:
+    detectors: ["system"]
+    system:
+      hostname_sources: ["os"]
+service:
+  pipelines:
+    traces:
+      processors:
+        - resourcedetection/system
+    metrics:
+      processors:
+        - resourcedetection/system
+    logs:
+      processors:
+        - resourcedetection/system
