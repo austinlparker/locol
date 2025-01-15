@@ -61,27 +61,19 @@ struct CollectorListView: View {
 struct CollectorStatusView: View {
     let collector: CollectorInstance
     let onStartStop: () -> Void
+    @State private var currentTime = Date()
+    let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
     
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             // Status indicator and basic info
             HStack(alignment: .center, spacing: 16) {
-                Label(
-                    collector.isRunning ? "Running" : "Stopped",
-                    systemImage: collector.isRunning ? "circle.fill" : "circle"
-                )
-                .foregroundStyle(collector.isRunning ? .green : .secondary)
+                Circle()
+                    .fill(collector.isRunning ? .green : .red)
+                    .frame(width: 8, height: 8)
                 
-                Divider()
-                    .frame(height: 20)
-                
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(collector.name)
-                        .font(.headline)
-                    Text("Version \(collector.version)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+                Text(collector.isRunning ? "Running" : "Stopped")
+                    .foregroundStyle(.secondary)
                 
                 Spacer()
                 
@@ -89,63 +81,53 @@ struct CollectorStatusView: View {
                     .tint(collector.isRunning ? .red : .green)
             }
             
-            // Additional details
             Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
                 GridRow {
-                    Text("Local Path")
+                    Text("PID")
                         .foregroundStyle(.secondary)
-                    Text(collector.localPath)
+                    if let pid = collector.pid {
+                        Text("\(pid)")
+                            .font(.system(.body, design: .monospaced))
+                    } else {
+                        Text("N/A")
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                
+                GridRow {
+                    Text("Config Path")
+                        .foregroundStyle(.secondary)
+                    Text(collector.configPath)
                         .font(.system(.body, design: .monospaced))
                         .textSelection(.enabled)
                 }
                 
-                if !collector.commandLineFlags.isEmpty {
-                    GridRow {
-                        Text("Flags")
-                            .foregroundStyle(.secondary)
-                        Text(collector.commandLineFlags)
-                            .font(.system(.body, design: .monospaced))
-                            .textSelection(.enabled)
-                    }
-                }
-                
-                if collector.isRunning {
-                    GridRow {
-                        Text("PID")
-                            .foregroundStyle(.secondary)
-                        Text("\(collector.pid ?? 0)")
-                            .font(.system(.body, design: .monospaced))
-                            .textSelection(.enabled)
-                    }
-                    
-                    GridRow {
-                        Text("Uptime")
-                            .foregroundStyle(.secondary)
-                        Text(formatUptime(since: collector.startTime))
-                            .font(.system(.body, design: .monospaced))
-                    }
+                GridRow {
+                    Text("Uptime")
+                        .foregroundStyle(.secondary)
+                    Text(formatUptime(since: collector.startTime))
+                        .font(.system(.body, design: .monospaced))
+                        .id(currentTime)
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
         .background(.background.secondary)
         .clipShape(RoundedRectangle(cornerRadius: 8))
+        .onReceive(timer) { _ in
+            currentTime = Date()
+        }
     }
     
     private func formatUptime(since date: Date?) -> String {
         guard let date = date else { return "N/A" }
-        let interval = Date().timeIntervalSince(date)
+        let formatter = DateComponentsFormatter()
+        formatter.allowedUnits = [.hour, .minute, .second]
+        formatter.unitsStyle = .abbreviated
+        formatter.maximumUnitCount = 3
         
-        let hours = Int(interval) / 3600
-        let minutes = Int(interval) / 60 % 60
-        let seconds = Int(interval) % 60
-        
-        if hours > 0 {
-            return String(format: "%dh %02dm %02ds", hours, minutes, seconds)
-        } else {
-            return String(format: "%dm %02ds", minutes, seconds)
-        }
+        return formatter.string(from: date, to: currentTime) ?? "N/A"
     }
 }
 
@@ -175,8 +157,8 @@ struct CollectorDetailView: View {
                         openWindow(id: "ConfigEditorWindow", value: collector.id)
                     }
                     
-                    Button("View Logs") {
-                        openWindow(id: "LogViewerWindow", value: collector.id)
+                    Button("View Metrics & Logs") {
+                        openWindow(id: "MetricsLogViewerWindow", value: collector.id)
                     }
                 }
                 
@@ -197,18 +179,6 @@ struct CollectorDetailView: View {
                     .background(Color(NSColor.textBackgroundColor))
                     .cornerRadius(4)
                     .accessibilityLabel("Command line arguments for collector")
-                }
-                
-                if collector.isRunning {
-                    Divider()
-                    
-                    // Metrics section
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Metrics")
-                            .font(.headline)
-                        
-                        MetricsView(metricsManager: manager.getMetricsManager(forCollectorId: collector.id))
-                    }
                 }
                 
                 Spacer()

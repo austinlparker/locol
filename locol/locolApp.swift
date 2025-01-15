@@ -28,12 +28,12 @@ struct locolApp: App {
                             }
                         }
                         
-                        Button("View Metrics") {
-                            openWindow(id: "ConfigEditorWindow", value: collector.id)
+                        Button("View Metrics & Logs") {
+                            openWindow(id: "MetricsLogViewerWindow", value: collector.id)
                         }
                         
-                        Button("View Logs") {
-                            openWindow(id: "LogViewerWindow", value: collector.id)
+                        Button("Edit Config") {
+                            openWindow(id: "ConfigEditorWindow", value: collector.id)
                         }
                     }
                 }
@@ -58,6 +58,7 @@ struct locolApp: App {
         Window("Settings", id: "SettingsWindow") {
             SettingsView(manager: collectorManager)
         }
+        .defaultSize(width: 900, height: 600)
         
         WindowGroup("Config Editor", id: "ConfigEditorWindow", for: UUID.self) { $collectorId in
             if let id = collectorId,
@@ -67,12 +68,12 @@ struct locolApp: App {
         }
         .defaultSize(width: 800, height: 600)
         
-        WindowGroup("Log Viewer", id: "LogViewerWindow", for: UUID.self) { $collectorId in
+        WindowGroup("Metrics & Logs", id: "MetricsLogViewerWindow", for: UUID.self) { $collectorId in
             if let id = collectorId,
                let collector = collectorManager.collectors.first(where: { $0.id == id }) {
-                LogViewer(collector: collector)
+                MetricsLogView(collector: collector, manager: collectorManager)
             }
         }
-        .defaultSize(width: 800, height: 600)
+        .defaultSize(width: 1000, height: 700)
     }
 }

@@ -23,14 +23,14 @@ struct PrometheusMetric {
 struct TimeSeriesData {
     let name: String
     let labels: [String: String]
-    var values: [(timestamp: Date, value: Double)]
+    var values: [(timestamp: Date, value: Double, labels: [String: String])]
     let definition: MetricDefinition?
     
     // Keep last hour of data by default
     let maxAge: TimeInterval = 3600
     
     mutating func addValue(_ value: Double, at timestamp: Date) {
-        values.append((timestamp: timestamp, value: value))
+        values.append((timestamp: timestamp, value: value, labels: labels))
         // Clean up old values
         let cutoff = Date().addingTimeInterval(-maxAge)
         values.removeAll { $0.timestamp < cutoff }
@@ -71,7 +71,11 @@ struct HistogramData {
 }
 
 class MetricsManager: ObservableObject {
-    @Published private(set) var metrics: [String: TimeSeriesData] = [:]
+    @Published private(set) var metrics: [String: TimeSeriesData] = [:] {
+        willSet {
+            objectWillChange.send()
+        }
+    }
     private var metricDefinitions: [String: MetricDefinition] = [:]
     @Published private(set) var histogramData: [String: [HistogramData]] = [:] // Key -> time series of histogram data
     private var timer: Timer?
@@ -117,34 +121,9 @@ class MetricsManager: ObservableObject {
         var currentType: MetricType?
         var currentName: String?
         
-        // Temporary storage for histogram data being processed
-        var currentHistogramBuckets: [(le: Double, count: Double)] = []
-        var currentHistogramSum: Double?
-        var currentHistogramCount: Double?
-        var currentHistogramName: String?
-        var currentHistogramLabels: [String: String]?
-        
+        // First pass: collect all metric metadata
         for line in lines {
             if line.hasPrefix("# HELP ") {
-                // Process any pending histogram data
-                if let name = currentHistogramName,
-                   let sum = currentHistogramSum,
-                   let count = currentHistogramCount {
-                    processHistogramData(name: name, 
-                                      labels: currentHistogramLabels ?? [:],
-                                      buckets: currentHistogramBuckets,
-                                      sum: sum,
-                                      count: count,
-                                      timestamp: now)
-                    
-                    // Reset histogram collection
-                    currentHistogramBuckets = []
-                    currentHistogramSum = nil
-                    currentHistogramCount = nil
-                    currentHistogramName = nil
-                    currentHistogramLabels = nil
-                }
-                
                 let parts = line.dropFirst(7).split(separator: " ", maxSplits: 1)
                 if parts.count == 2 {
                     currentName = String(parts[0])
@@ -152,7 +131,9 @@ class MetricsManager: ObservableObject {
                 }
             } else if line.hasPrefix("# TYPE ") {
                 let parts = line.dropFirst(7).split(separator: " ", maxSplits: 1)
-                if parts.count == 2, let name = currentName {
+                if parts.count == 2 {
+                    let name = String(parts[0])
+                    currentName = name // Update currentName with the TYPE line name
                     currentType = parseMetricType(String(parts[1]))
                     if let help = currentHelp, let type = currentType {
                         metricDefinitions[name] = MetricDefinition(
@@ -162,7 +143,19 @@ class MetricsManager: ObservableObject {
                         )
                     }
                 }
-            } else if !line.isEmpty && !line.hasPrefix("#") {
+            }
+        }
+        
+        // Temporary storage for histogram data being processed
+        var currentHistogramBuckets: [(le: Double, count: Double)] = []
+        var currentHistogramSum: Double?
+        var currentHistogramCount: Double?
+        var currentHistogramName: String?
+        var currentHistogramLabels: [String: String]?
+        
+        // Second pass: process metric values
+        for line in lines {
+            if !line.isEmpty && !line.hasPrefix("#") {
                 if let metric = parseMetricLine(line) {
                     if metric.name.hasSuffix("_bucket") {
                         // Extract the base name (remove _bucket suffix)
@@ -179,18 +172,7 @@ class MetricsManager: ObservableObject {
                         currentHistogramCount = metric.value
                     } else {
                         let key = metricKey(name: metric.name, labels: metric.labels)
-                        if var timeSeriesData = metrics[key] {
-                            timeSeriesData.addValue(metric.value, at: now)
-                            metrics[key] = timeSeriesData
-                        } else {
-                            let definition = metricDefinitions[metric.name]
-                            metrics[key] = TimeSeriesData(
-                                name: metric.name,
-                                labels: metric.labels,
-                                values: [(timestamp: now, value: metric.value)],
-                                definition: definition
-                            )
-                        }
+                        updateMetric(key: key, value: metric.value, at: now)
                     }
                 }
             }
@@ -247,7 +229,7 @@ class MetricsManager: ObservableObject {
             metrics[key] = TimeSeriesData(
                 name: baseName,
                 labels: labels,
-                values: [(timestamp: timestamp, value: histData.average)],
+                values: [(timestamp: timestamp, value: histData.average, labels: labels)],
                 definition: definition
             )
         }
@@ -271,7 +253,7 @@ class MetricsManager: ObservableObject {
                 metrics[percentileKey] = TimeSeriesData(
                     name: percentileName,
                     labels: labels,
-                    values: [(timestamp: timestamp, value: value)],
+                    values: [(timestamp: timestamp, value: value, labels: labels)],
                     definition: definition
                 )
             }
@@ -353,7 +335,7 @@ class MetricsManager: ObservableObject {
         return "\(name){\(labelString)}"
     }
     
-    func getMetricValues(name: String) -> [(timestamp: Date, value: Double)]? {
+    func getMetricValues(name: String) -> [(timestamp: Date, value: Double, labels: [String: String])]? {
         // First try exact match
         if let metric = metrics[name] {
             return metric.values
@@ -361,10 +343,90 @@ class MetricsManager: ObservableObject {
         
         // Then try with base name
         let baseName = name.hasSuffix("_bucket") ? String(name.dropLast(7)) : name
-        return metrics.first { $0.value.name == baseName }?.value.values
+        return metrics.first(where: { $0.value.name == baseName })?.value.values
     }
     
     deinit {
         timer?.invalidate()
+    }
+    
+    private func createDefaultDefinition(for metricName: String) -> MetricDefinition {
+        // Attempt to infer type from name based on OpenMetrics spec
+        let type: MetricType
+        if metricName.hasSuffix("_total") {
+            // Counter metrics end in _total
+            type = .counter
+        } else if metricName.hasSuffix("_bucket") {
+            // Histogram metrics have _bucket suffix
+            type = .histogram
+        } else if metricName.hasSuffix("_sum") || metricName.hasSuffix("_count") {
+            // These belong to histogram/summary metrics, but we'll treat their values as gauges
+            type = .gauge
+        } else {
+            // Default to gauge for everything else
+            type = .gauge
+        }
+        
+        return MetricDefinition(
+            name: metricName,
+            description: "Metric: \(metricName)",
+            type: type
+        )
+    }
+    
+    private func updateMetric(key: String, value: Double, at timestamp: Date) {
+        var updatedMetrics = metrics
+        if var timeSeriesData = updatedMetrics[key] {
+            timeSeriesData.addValue(value, at: timestamp)
+            updatedMetrics[key] = timeSeriesData
+            metrics = updatedMetrics
+        } else {
+            // Extract base name and labels from key
+            let baseName = key.split(separator: "{").first.map(String.init) ?? key
+            let labels = parseLabelsFromKey(key)
+            
+            // Use the type from the TYPE metadata, or create a default definition if not found
+            let definition = metricDefinitions[baseName] ?? createDefaultDefinition(for: baseName)
+            updatedMetrics[key] = TimeSeriesData(
+                name: baseName,
+                labels: labels,
+                values: [(timestamp: timestamp, value: value, labels: labels)],
+                definition: definition
+            )
+            metrics = updatedMetrics
+        }
+    }
+    
+    // Add helper function to parse labels from key
+    private func parseLabelsFromKey(_ key: String) -> [String: String] {
+        guard let openBrace = key.firstIndex(of: "{"),
+              let closeBrace = key.lastIndex(of: "}") else {
+            return [:]
+        }
+        
+        let labelsString = String(key[openBrace...closeBrace])
+        return parseLabels(labelsString)
+    }
+    
+    // Add helper function to parse labels string
+    private func parseLabels(_ labelsString: String) -> [String: String] {
+        var labels: [String: String] = [:]
+        let trimmedString = labelsString.trimmingCharacters(in: CharacterSet(charactersIn: "{}"))
+        let labelPairs = trimmedString.split(separator: ",")
+        
+        for pair in labelPairs {
+            let parts = pair.split(separator: "=", maxSplits: 1)
+            if parts.count == 2 {
+                let key = String(parts[0]).trimmingCharacters(in: .whitespaces)
+                var value = String(parts[1]).trimmingCharacters(in: .whitespaces)
+                // Remove quotes if present
+                if value.hasPrefix("\"") && value.hasSuffix("\"") {
+                    value = String(value.dropFirst().dropLast())
+                }
+                labels[key] = value
+            }
+        }
+        
+        return labels
     }
 } 
