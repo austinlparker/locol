@@ -1,0 +1,38 @@
+processors:
+  transform:
+    error_mode: ignore
+    trace_statements:
+      - context: resource
+        statements:
+          - set(app.locol.resource, "true")
+      - context: span
+        statements:
+          - set(app.locol.attr, "true")
+    metric_statements:
+      - context: resource
+        statements:
+          - set(app.locol.resource, "true")
+      - context: metric
+        statements:
+          - set(app.locol.metric, "true") 
+    log_statements:
+      - context: resource
+        statements:
+          - set(app.locol.resource, "true")
+      - context: log
+        statements:
+          - set(app.locol.log, "true")
+
+service:
+  pipelines:
+    traces:
+      processors:
+        - transform
+    metrics:
+      processors:
+        - transform
+    logs:
+      processors:
+        - transform
+
+

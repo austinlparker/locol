@@ -1,0 +1,13 @@
+receivers:
+  filelog/json:
+    include: [ /var/log/myservice/*.json ]
+    operators:
+      - type: json_parser
+        timestamp:
+          parse_from: attributes.time
+          layout: '%Y-%m-%d %H:%M:%S'
+service:
+  pipelines:
+    logs:
+      receivers: 
+        - filelog/json

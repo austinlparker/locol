@@ -12,9 +12,9 @@ class CollectorManager: ObservableObject {
     @Published private(set) var isDownloading: Bool = false
     @Published var downloadProgress: Double = 0.0
     @Published var downloadStatus: String = ""
+    @Published private(set) var activeCollector: CollectorInstance? = nil
     
-    private var runningProcesses: [UUID: Process] = [:]
-    private var metricsManagers: [UUID: MetricsManager] = [:]
+    private var metricsManager = MetricsManager.shared
     private var cancellables = Set<AnyCancellable>()
     
     let fileManager: CollectorFileManager
@@ -63,49 +63,95 @@ class CollectorManager: ObservableObject {
         appState.collectors
     }
     
+    private func createCollectorDirectory(name: String, version: String) throws -> (binaryPath: String, configPath: String) {
+        let collectorDir = fileManager.baseDirectory.appendingPathComponent("collectors").appendingPathComponent(name)
+        let binPath = collectorDir.appendingPathComponent("bin")
+        let configPath = collectorDir.appendingPathComponent("config.yaml")
+        
+        do {
+            try FileManager.default.createDirectory(at: binPath, withIntermediateDirectories: true)
+            AppLogger.shared.debug("Created directory at \(binPath.path)")
+            return (binPath.path, configPath.path)
+        } catch {
+            AppLogger.shared.error("Failed to create directory at \(binPath.path): \(error.localizedDescription)")
+            throw error
+        }
+    }
+    
     func addCollector(name: String, version: String, release: Release, asset: ReleaseAsset) {
         isDownloading = true
         downloadStatus = "Creating collector directory..."
         downloadProgress = 0.0
         
+        // Create the directory first
         do {
-            let paths = try createCollectorDirectory(name: name, version: version)
-            downloadStatus = "Downloading collector binary..."
-            
-            downloadManager.downloadAsset(releaseAsset: asset, name: name, version: version) { [weak self] result in
-                guard let self = self else { return }
-                
-                switch result {
-                case .success((let binaryPath, let configPath)):
-                    let collector = CollectorInstance(
-                        name: name,
-                        version: version,
-                        binaryPath: binaryPath,
-                        configPath: configPath
-                    )
-                    self.appState.addCollector(collector)
-                case .failure(let error):
-                    AppLogger.shared.error("Failed to download collector: \(error.localizedDescription)")
-                    // Clean up the directory on failure
-                    try? self.fileManager.deleteCollector(name: name)
-                }
-                
-                self.isDownloading = false
-                self.downloadProgress = 0.0
-                self.downloadStatus = ""
-            }
+            _ = try createCollectorDirectory(name: name, version: version)
         } catch {
             AppLogger.shared.error("Failed to create collector directory: \(error.localizedDescription)")
             isDownloading = false
             downloadProgress = 0.0
             downloadStatus = ""
+            return
+        }
+        
+        // Then download the asset
+        downloadStatus = "Downloading collector binary..."
+        downloadManager.downloadAsset(releaseAsset: asset, name: name, version: version) { [weak self] result in
+            guard let self = self else { return }
+            
+            switch result {
+            case .success((let binaryPath, let configPath)):
+                let collector = CollectorInstance(
+                    name: name,
+                    version: version,
+                    binaryPath: binaryPath,
+                    configPath: configPath
+                )
+                self.appState.addCollector(collector)
+                
+                // Get component information
+                Task {
+                    do {
+                        await MainActor.run {
+                            self.downloadStatus = "Getting component information..."
+                        }
+                        let components = try await self.processManager.getCollectorComponents(collector)
+                        await MainActor.run {
+                            var updatedCollector = collector
+                            updatedCollector.components = components
+                            self.appState.updateCollector(updatedCollector)
+                            self.isDownloading = false
+                            self.downloadProgress = 0.0
+                            self.downloadStatus = ""
+                        }
+                    } catch {
+                        AppLogger.shared.error("Failed to get collector components: \(error.localizedDescription)")
+                        await MainActor.run {
+                            self.isDownloading = false
+                            self.downloadProgress = 0.0
+                            self.downloadStatus = ""
+                        }
+                    }
+                }
+            case .failure(let error):
+                AppLogger.shared.error("Failed to download collector: \(error.localizedDescription)")
+                // Clean up the directory on failure
+                try? self.fileManager.deleteCollector(name: name)
+                self.isDownloading = false
+                self.downloadProgress = 0.0
+                self.downloadStatus = ""
+            }
         }
     }
     
     func removeCollector(withId id: UUID) {
         guard let collector = appState.getCollector(withId: id) else { return }
-        stopCollector(withId: id)
-        metricsManagers.removeValue(forKey: id)
+        
+        // If this is the active collector, stop it first
+        if activeCollector?.id == id {
+            stopCollector(withId: id)
+        }
+        
         appState.removeCollector(withId: id)
         
         do {
@@ -121,31 +167,55 @@ class CollectorManager: ObservableObject {
         
         do {
             try processManager.startCollector(collector)
+            
+            // Update collector state
             var updatedCollector = collector
             updatedCollector.isRunning = true
-            updatedCollector.startTime = Date()
-            if let process = processManager.getProcess(forCollector: collector) {
+            if let process = processManager.getActiveProcess() {
                 updatedCollector.pid = Int(process.processIdentifier)
             }
+            updatedCollector.startTime = Date()
             appState.updateCollector(updatedCollector)
-            // Create metrics manager when collector starts
-            _ = getMetricsManager(forCollectorId: id)
+            activeCollector = updatedCollector
+            
+            // Start metrics manager
+            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                // Give the collector time to start up before scraping metrics
+                self.metricsManager.startScraping()
+            }
         } catch {
             AppLogger.shared.error("Failed to start collector: \(error.localizedDescription)")
-            // TODO: Show error to user
         }
     }
     
     func stopCollector(withId id: UUID) {
         guard let collector = appState.getCollector(withId: id) else { return }
         
-        processManager.stopCollector(collector)
-        var updatedCollector = collector
-        updatedCollector.isRunning = false
-        updatedCollector.pid = nil
-        updatedCollector.startTime = nil
-        appState.updateCollector(updatedCollector)
-        metricsManagers.removeValue(forKey: id)
+        // Stop metrics manager first
+        metricsManager.stopScraping()
+        
+        // Then stop the collector
+        do {
+            try processManager.stopCollector()
+            
+            // Update collector state
+            var updatedCollector = collector
+            updatedCollector.isRunning = false
+            updatedCollector.pid = nil
+            updatedCollector.startTime = nil
+            appState.updateCollector(updatedCollector)
+            activeCollector = nil
+        } catch ProcessError.notRunning {
+            // If the process isn't running, just update the state
+            var updatedCollector = collector
+            updatedCollector.isRunning = false
+            updatedCollector.pid = nil
+            updatedCollector.startTime = nil
+            appState.updateCollector(updatedCollector)
+            activeCollector = nil
+        } catch {
+            AppLogger.shared.error("Failed to stop collector: \(error.localizedDescription)")
+        }
     }
     
     func isCollectorRunning(withId id: UUID) -> Bool {
@@ -194,44 +264,16 @@ class CollectorManager: ObservableObject {
         }
     }
     
-    func getMetricsManager(forCollectorId id: UUID) -> MetricsManager {
-        if let manager = metricsManagers[id] {
-            return manager
-        }
-        let manager = MetricsManager()
-        metricsManagers[id] = manager
-        return manager
+    func getMetricsManager() -> MetricsManager {
+        return metricsManager
     }
     
-    private func createCollectorDirectory(name: String, version: String) throws -> (binaryPath: String, configPath: String) {
-        let collectorDir = fileManager.baseDirectory.appendingPathComponent("collectors").appendingPathComponent(name)
-        let binPath = collectorDir.appendingPathComponent("bin")
-        let configPath = collectorDir.appendingPathComponent("config.yaml")
-        
-        try FileManager.default.createDirectory(at: binPath, withIntermediateDirectories: true)
-        AppLogger.shared.debug("Created directory at \(binPath.path)")
-        
-        // Copy default config
-        if let defaultConfig = Bundle.main.url(forResource: "default", withExtension: "yaml", subdirectory: "templates") {
-            AppLogger.shared.debug("Found default config at \(defaultConfig.path)")
-            try FileManager.default.copyItem(at: defaultConfig, to: configPath)
-            AppLogger.shared.debug("Copied default config to \(configPath.path)")
-        } else {
-            AppLogger.shared.error("Could not find default config in bundle at templates/default.yaml")
-            // Try alternate locations
-            if let defaultConfig = Bundle.main.url(forResource: "default", withExtension: "yaml") {
-                AppLogger.shared.debug("Found default config at root: \(defaultConfig.path)")
-                try FileManager.default.copyItem(at: defaultConfig, to: configPath)
-                AppLogger.shared.debug("Copied default config to \(configPath.path)")
-            } else {
-                AppLogger.shared.error("Could not find default config anywhere in bundle")
-                // Create empty config to avoid null issues
-                try "receivers: {}\nprocessors: {}\nexporters: {}\n".write(to: configPath, atomically: true, encoding: .utf8)
-                AppLogger.shared.debug("Created empty config at \(configPath.path)")
-            }
-        }
-        
-        return (binPath.path, configPath.path)
+    func refreshCollectorComponents(withId id: UUID) async throws {
+        guard let collector = appState.getCollector(withId: id) else { return }
+        let components = try await processManager.getCollectorComponents(collector)
+        var updatedCollector = collector
+        updatedCollector.components = components
+        appState.updateCollector(updatedCollector)
     }
 }
 

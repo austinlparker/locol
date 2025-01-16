@@ -86,7 +86,7 @@ struct CollectorStatusView: View {
                     Text("PID")
                         .foregroundStyle(.secondary)
                     if let pid = collector.pid {
-                        Text("\(pid)")
+                        Text(String(format: "%d", pid))
                             .font(.system(.body, design: .monospaced))
                     } else {
                         Text("N/A")

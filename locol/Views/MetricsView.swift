@@ -1,5 +1,19 @@
 import SwiftUI
 import Charts
+import os
+
+private let logger = Logger(subsystem: "io.aparker.locol", category: "MetricsView")
+
+// Helper extension for label formatting
+extension Dictionary where Key == String, Value == String {
+    func formattedLabelsString() -> String {
+        guard !isEmpty else { return "" }
+        return self
+            .sorted(by: { $0.key < $1.key })
+            .map { "\($0.key)=\($0.value)" }
+            .joined(separator: ", ")
+    }
+}
 
 // Base protocol for metric views
 protocol MetricViewType {
@@ -7,7 +21,6 @@ protocol MetricViewType {
     var description: String { get }
     var values: [(timestamp: Date, value: Double, labels: [String: String])] { get }
     var labels: [String: String] { get }
-    var metricsManager: MetricsManager { get }
 }
 
 // Common header view for all metric types
@@ -68,12 +81,8 @@ struct BasicChartView: View {
     }
     
     private var legendText: String {
-        guard let firstLabels = values.first?.labels,
-              !firstLabels.isEmpty else { return "" }
-        return firstLabels
-            .sorted(by: { $0.key < $1.key })
-            .map { "\($0.key)=\($0.value)" }
-            .joined(separator: ", ")
+        guard let firstLabels = values.first?.labels else { return "" }
+        return firstLabels.formattedLabelsString()
     }
     
     var body: some View {
@@ -84,7 +93,7 @@ struct BasicChartView: View {
                     y: .value("Value", point.value)
                 )
                 .foregroundStyle(color.gradient)
-                .interpolationMethod(.linear)
+                .interpolationMethod(.catmullRom)
                 
                 if selectedPoint?.timestamp == point.timestamp {
                     PointMark(
@@ -172,28 +181,65 @@ struct CounterMetricView: View, MetricViewType {
     let description: String
     let values: [(timestamp: Date, value: Double, labels: [String: String])]
     let labels: [String: String]
-    @ObservedObject var metricsManager: MetricsManager
+    @ObservedObject private var metricsManager = MetricsManager.shared
     
     private func calculateRates(for values: [(timestamp: Date, value: Double, labels: [String: String])]) -> [(timestamp: Date, value: Double, labels: [String: String])] {
+        // Need at least 2 points for rate calculation
         guard values.count >= 2 else { return [] }
         
-        var rates: [(timestamp: Date, value: Double, labels: [String: String])] = []
-        var lastValue = values[0].value
-        var lastTimestamp = values[0].timestamp
+        // Window size for rate calculation (similar to Prometheus default range)
+        let windowSize: TimeInterval = 300 // 5 minutes
         
-        for point in values.dropFirst() {
-            let timeDiff = point.timestamp.timeIntervalSince(lastTimestamp)
-            var valueDiff = point.value - lastValue
+        var rates: [(timestamp: Date, value: Double, labels: [String: String])] = []
+        
+        // Calculate rates for each point using a sliding window
+        for i in 0..<values.count {
+            let currentTime = values[i].timestamp
             
-            if valueDiff < 0 {
-                valueDiff = point.value
+            // Find points within the window
+            let windowStart = currentTime.addingTimeInterval(-windowSize)
+            let windowPoints = values.filter { 
+                $0.timestamp <= currentTime && $0.timestamp >= windowStart 
             }
             
-            let rate = timeDiff > 0 ? valueDiff / timeDiff : 0
-            rates.append((timestamp: point.timestamp, value: rate, labels: point.labels))
+            // Need at least 2 points in window for calculation
+            guard windowPoints.count >= 2 else { continue }
             
-            lastValue = point.value
-            lastTimestamp = point.timestamp
+            // Prepare points for linear regression
+            var sumX: Double = 0
+            var sumY: Double = 0
+            var sumXX: Double = 0
+            var sumXY: Double = 0
+            let n = Double(windowPoints.count)
+            
+            // Calculate relative timestamps to avoid floating point precision issues
+            let firstTimestamp = windowPoints[0].timestamp.timeIntervalSince1970
+            
+            for point in windowPoints {
+                let x = point.timestamp.timeIntervalSince1970 - firstTimestamp
+                var y = point.value
+                
+                // Handle counter resets
+                if let prevPoint = windowPoints.first(where: { $0.timestamp < point.timestamp }),
+                   y < prevPoint.value {
+                    y += prevPoint.value // On reset, add previous value
+                }
+                
+                sumX += x
+                sumY += y
+                sumXX += x * x
+                sumXY += x * y
+            }
+            
+            // Calculate rate using linear regression
+            let slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX)
+            
+            // Convert slope from per-second to per-second (it already is, as we used seconds)
+            rates.append((
+                timestamp: currentTime,
+                value: max(0, slope), // Rates should never be negative
+                labels: values[i].labels
+            ))
         }
         
         return rates
@@ -226,22 +272,33 @@ struct GaugeMetricView: View, MetricViewType {
     let description: String
     let values: [(timestamp: Date, value: Double, labels: [String: String])]
     let labels: [String: String]
-    @ObservedObject var metricsManager: MetricsManager
+    @ObservedObject private var metricsManager = MetricsManager.shared
     
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             MetricHeaderView(metricName: metricName, description: description)
-            BasicChartView(
-                values: values,
-                color: .orange
-            )
             
+            // Center the value vertically in the same space a chart would take
+            Spacer()
             if let lastValue = values.last?.value {
-                Text("Value: \(formatValue(lastValue))")
-                    .font(.caption)
+                Text(formatValue(lastValue))
+                    .font(.system(size: 48, weight: .medium, design: .monospaced))
+                    .foregroundStyle(.orange)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .minimumScaleFactor(0.5) // Allow text to scale down if needed
+                    .lineLimit(1)
+            }
+            Spacer()
+            
+            if !labels.isEmpty {
+                Text(labels.formattedLabelsString())
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .truncationMode(.tail)
             }
         }
+        .frame(height: 300) // Match the height of chart views
         .padding()
         .background(.background)
         .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -269,42 +326,7 @@ struct HistogramChartView: View {
     let buckets: [(le: Double, count: Double)]
     let totalCount: Double
     let labels: [String: String]
-    private let maxBuckets = 20 // Limit buckets to reduce complexity
     @State private var selectedBucket: (le: Double, count: Double)?
-    @State private var tooltipPosition: CGPoint = .zero
-    
-    private var displayBuckets: [(le: Double, count: Double)] {
-        // If we have more buckets than maxBuckets, sample them evenly
-        if buckets.count > maxBuckets {
-            let step = Double(buckets.count) / Double(maxBuckets)
-            return stride(from: 0, to: Double(buckets.count), by: step)
-                .map { Int($0) }
-                .map { buckets[$0] }
-        }
-        return buckets
-    }
-    
-    private func findClosestBucket(at location: CGPoint, in proxy: ChartProxy, frame: CGRect) -> (bucket: (le: Double, count: Double), xPosition: CGFloat)? {
-        let xPosition = location.x - frame.origin.x
-        guard let value: Double = proxy.value(atX: xPosition, as: Double.self) else { return nil }
-        
-        let bucket = displayBuckets.min(by: { abs($0.le - value) < abs($1.le - value) })
-        guard let foundBucket = bucket else { return nil }
-        
-        // Convert the bucket's le value back to x coordinate
-        if let bucketLocation = proxy.position(for: (x: foundBucket.le, y: foundBucket.count)) {
-            return (foundBucket, bucketLocation.x + frame.origin.x)
-        }
-        return nil
-    }
-    
-    private var legendText: String {
-        guard !labels.isEmpty else { return "" }
-        return labels
-            .sorted(by: { $0.key < $1.key })
-            .map { "\($0.key)=\($0.value)" }
-            .joined(separator: ", ")
-    }
     
     var body: some View {
         VStack(spacing: 8) {
@@ -320,96 +342,95 @@ struct HistogramChartView: View {
                 }
             }
             
-            VStack(alignment: .leading, spacing: 4) {
-                Chart(displayBuckets, id: \.le) { bucket in
-                    BarMark(
-                        x: .value("Upper Bound", formatValue(bucket.le)),
-                        y: .value("Count", bucket.count)
+            Chart(buckets, id: \.le) { bucket in
+                BarMark(
+                    x: .value("Upper Bound", bucket.le),
+                    y: .value("Count", bucket.count)
+                )
+                .foregroundStyle(.green.gradient)
+                
+                if selectedBucket?.le == bucket.le {
+                    RuleMark(
+                        x: .value("Selected", bucket.le)
                     )
-                    .foregroundStyle(.green.gradient)
-                    
-                    if selectedBucket?.le == bucket.le {
-                        RuleMark(
-                            x: .value("Selected", formatValue(bucket.le))
-                        )
-                        .foregroundStyle(.secondary.opacity(0.3))
+                    .foregroundStyle(.secondary.opacity(0.3))
+                }
+            }
+            .frame(height: 250)
+            .chartXAxis {
+                AxisMarks(values: .automatic(desiredCount: 6)) { value in
+                    AxisGridLine()
+                    AxisTick()
+                    AxisValueLabel {
+                        if let v = value.as(Double.self) {
+                            Text(formatValue(v))
+                        }
                     }
                 }
-                .frame(height: 250)
-                .chartXAxis {
-                    AxisMarks(values: .automatic(desiredCount: 6)) { _ in
-                        AxisGridLine()
-                        AxisTick()
-                        AxisValueLabel()
-                    }
+            }
+            .chartYAxis {
+                AxisMarks(values: .automatic(desiredCount: 5)) { _ in
+                    AxisGridLine()
+                    AxisTick()
+                    AxisValueLabel()
                 }
-                .chartYAxis {
-                    AxisMarks(values: .automatic(desiredCount: 5)) { _ in
-                        AxisGridLine()
-                        AxisTick()
-                        AxisValueLabel()
-                    }
-                }
-                .chartOverlay { proxy in
-                    GeometryReader { geometry in
-                        Rectangle()
-                            .fill(.clear)
-                            .contentShape(Rectangle())
-                            .onContinuousHover { phase in
-                                switch phase {
-                                case .active(let location):
-                                    if let (bucket, xPos) = findClosestBucket(at: location, in: proxy, frame: geometry.frame(in: .local)) {
-                                        withAnimation(.easeInOut(duration: 0.05)) {
-                                            selectedBucket = bucket
-                                            tooltipPosition = CGPoint(x: xPos, y: 0)
-                                        }
-                                    }
-                                case .ended:
+            }
+            .chartOverlay { proxy in
+                GeometryReader { geometry in
+                    Rectangle()
+                        .fill(.clear)
+                        .contentShape(Rectangle())
+                        .onContinuousHover { phase in
+                            switch phase {
+                            case .active(let location):
+                                let xPosition = location.x - geometry.frame(in: .local).minX
+                                
+                                if let value = proxy.value(atX: xPosition, as: Double.self),
+                                   let closest = buckets.min(by: { abs($0.le - value) < abs($1.le - value) }) {
                                     withAnimation(.easeInOut(duration: 0.05)) {
-                                        selectedBucket = nil
+                                        selectedBucket = closest
                                     }
                                 }
-                            }
-                    }
-                }
-                .overlay(alignment: .bottom) {
-                    if let bucket = selectedBucket {
-                        VStack(alignment: .leading, spacing: 2) {
-                            HStack(spacing: 4) {
-                                Text("≤ \(formatValue(bucket.le))")
-                                    .font(.callout)
-                                    .foregroundStyle(.green)
-                                Text("·")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                Text("\(formatValue(bucket.count)) samples")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                Text("·")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                Text("\(Int((bucket.count / totalCount) * 100))%")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
+                            case .ended:
+                                withAnimation(.easeInOut(duration: 0.05)) {
+                                    selectedBucket = nil
+                                }
                             }
                         }
-                        .padding(6)
-                        .background(.background.opacity(0.95))
-                        .cornerRadius(6)
-                        .shadow(radius: 1)
-                        .padding(.bottom, 8)
-                        .zIndex(1)
-                        .transition(.opacity)
+                }
+            }
+            .overlay(alignment: .top) {
+                if let bucket = selectedBucket {
+                    HStack(spacing: 4) {
+                        Text("≤ \(formatValue(bucket.le))")
+                            .font(.callout)
+                            .foregroundStyle(.green)
+                        Text("·")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Text("\(formatValue(bucket.count)) samples")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Text("·")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                        Text("\(Int((bucket.count / totalCount) * 100))%")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                     }
+                    .padding(6)
+                    .background(.background.opacity(0.95))
+                    .cornerRadius(6)
+                    .shadow(radius: 1)
                 }
-                
-                if !legendText.isEmpty {
-                    Text(legendText)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
-                        .truncationMode(.tail)
-                }
+            }
+            
+            if !labels.isEmpty {
+                Text(labels.formattedLabelsString())
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .truncationMode(.tail)
             }
         }
     }
@@ -421,11 +442,27 @@ struct HistogramMetricView: View, MetricViewType {
     let description: String
     let values: [(timestamp: Date, value: Double, labels: [String: String])]
     let labels: [String: String]
-    @ObservedObject var metricsManager: MetricsManager
+    @ObservedObject private var metricsManager = MetricsManager.shared
     
     private func getCurrentHistogram() -> HistogramData? {
-        let key = metricsManager.metricKey(name: metricName, labels: labels)
-        return metricsManager.histogramData[key]?.last
+        // Remove any _bucket, _sum, or _count suffixes to get the base name
+        let baseName = metricName
+            .replacingOccurrences(of: "_bucket", with: "")
+            .replacingOccurrences(of: "_sum", with: "")
+            .replacingOccurrences(of: "_count", with: "")
+        
+        let key = metricsManager.metricKey(name: baseName, labels: labels)
+        logger.debug("Getting histogram data for key: \(key), base name: \(baseName)")
+        
+        let data = metricsManager.histogramData[key]?.last
+        if let data = data {
+            logger.debug("Found histogram data: buckets=\(data.buckets.count), sum=\(data.sum), count=\(data.count)")
+        } else {
+            logger.debug("No histogram data found for key: \(key)")
+            logger.debug("Available histogram keys: \(metricsManager.histogramData.keys.joined(separator: ", "))")
+            logger.debug("Available metric keys: \(metricsManager.metrics.keys.joined(separator: ", "))")
+        }
+        return data
     }
     
     var body: some View {
@@ -466,6 +503,9 @@ struct HistogramMetricView: View, MetricViewType {
                     }
                 }
                 .padding(.vertical, 4)
+                .onAppear {
+                    logger.debug("Rendering histogram grid for \(metricName)")
+                }
                 
                 // Bucket distribution chart
                 let buckets = histogram.buckets.filter { !$0.le.isInfinite }
@@ -474,6 +514,9 @@ struct HistogramMetricView: View, MetricViewType {
                     totalCount: histogram.count,
                     labels: labels
                 )
+                .onAppear {
+                    logger.debug("Rendering histogram chart for \(metricName) with \(buckets.count) buckets")
+                }
             } else {
                 ContentUnavailableView {
                     Label("No Data", systemImage: "chart.bar")
@@ -487,33 +530,96 @@ struct HistogramMetricView: View, MetricViewType {
         .background(.background)
         .clipShape(RoundedRectangle(cornerRadius: 8))
         .shadow(radius: 1, y: 1)
+        .onAppear {
+            logger.debug("HistogramMetricView appeared for \(metricName)")
+        }
+    }
+}
+
+// Make TimeSeriesData identifiable
+struct TimeSeriesData: Identifiable {
+    let id: String
+    let name: String
+    let labels: [String: String]
+    var values: [(timestamp: Date, value: Double, labels: [String: String])]
+    let definition: MetricDefinition?
+    
+    // Keep last hour of data by default
+    let maxAge: TimeInterval = 3600
+    
+    init(name: String, labels: [String: String], values: [(timestamp: Date, value: Double, labels: [String: String])], definition: MetricDefinition?) {
+        self.id = MetricsManager.shared.metricKey(name: name, labels: labels)
+        self.name = name
+        self.labels = labels
+        self.values = values
+        self.definition = definition
+    }
+    
+    mutating func addValue(_ value: Double, at timestamp: Date) {
+        values.append((timestamp: timestamp, value: value, labels: labels))
+        // Clean up old values
+        let cutoff = Date().addingTimeInterval(-maxAge)
+        values.removeAll { $0.timestamp < cutoff }
+    }
+}
+
+// Regular metric row view
+struct MetricRowView: View {
+    let metrics: [TimeSeriesData]
+    let columns: Int
+    let spacing: CGFloat
+    let itemWidth: CGFloat
+    
+    var body: some View {
+        HStack(spacing: spacing) {
+            ForEach(metrics) { metric in
+                if let definition = metric.definition {
+                    Group {
+                        switch definition.type {
+                        case .counter:
+                            CounterMetricView(
+                                metricName: metric.name,
+                                description: definition.description,
+                                values: metric.values,
+                                labels: metric.labels
+                            )
+                        case .gauge:
+                            GaugeMetricView(
+                                metricName: metric.name,
+                                description: definition.description,
+                                values: metric.values,
+                                labels: metric.labels
+                            )
+                        case .histogram:
+                            EmptyView() // Skip histograms as they're handled separately
+                        }
+                    }
+                    .frame(width: itemWidth)
+                    .frame(minHeight: 300)
+                }
+            }
+            if metrics.count < columns {
+                Spacer()
+            }
+        }
     }
 }
 
 // Main metrics view
 struct MetricsView: View {
-    @ObservedObject var metricsManager: MetricsManager
+    @StateObject private var metricsManager = MetricsManager.shared
     @State private var hasInitialData = false
     
-    private var metrics: [TimeSeriesData] {
-        Array(metricsManager.metrics.values)
-            .filter { metric in
-                // Filter out gauge metrics that are derived from histograms
-                if let definition = metric.definition,
-                   definition.type == .gauge,
-                   metric.name.contains("_p") || metric.name.hasSuffix("_sum") || metric.name.hasSuffix("_count") {
-                    return false
-                }
-                return true
-            }
-            // Sort metrics by name to maintain stable order
-            .sorted { $0.name < $1.name }
+    private var metricCollection: MetricCollection {
+        let collection = MetricCollection(metrics: metricsManager.metrics)
+        logger.debug("MetricCollection created - Histograms: \(collection.histograms.count), Regular: \(collection.regular.count)")
+        return collection
     }
     
     var body: some View {
         GeometryReader { geometry in
             ScrollView {
-                if metrics.isEmpty {
+                if metricsManager.metrics.isEmpty {
                     ContentUnavailableView {
                         Label("No Metrics", systemImage: hasInitialData ? "chart.line.downtrend.xyaxis" : "arrow.clockwise")
                     } description: {
@@ -521,40 +627,40 @@ struct MetricsView: View {
                     }
                     .frame(maxWidth: .infinity, minHeight: 300)
                 } else {
-                    let columns = max(1, min(3, Int(floor(geometry.size.width / 500))))
-                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 16), count: columns), spacing: 16) {
-                        ForEach(metrics, id: \.name) { metric in
+                    let availableWidth = geometry.size.width - 32
+                    let columns = max(1, min(3, Int(floor(availableWidth / 500))))
+                    let spacing: CGFloat = 16
+                    let itemWidth = (availableWidth - (spacing * CGFloat(columns - 1))) / CGFloat(columns)
+                    
+                    VStack(spacing: spacing) {
+                        // Regular metrics grid
+                        let rows = stride(from: 0, to: metricCollection.regular.count, by: columns).map {
+                            Array(metricCollection.regular[$0..<min($0 + columns, metricCollection.regular.count)])
+                        }
+                        
+                        ForEach(Array(rows.enumerated()), id: \.offset) { _, rowMetrics in
+                            MetricRowView(
+                                metrics: rowMetrics,
+                                columns: columns,
+                                spacing: spacing,
+                                itemWidth: itemWidth
+                            )
+                        }
+                        
+                        // Histogram metrics
+                        ForEach(metricCollection.histograms) { metric in
                             if let definition = metric.definition {
-                                Group {
-                                    switch definition.type {
-                                    case .counter:
-                                        CounterMetricView(
-                                            metricName: metric.name,
-                                            description: definition.description,
-                                            values: metric.values,
-                                            labels: metric.labels,
-                                            metricsManager: metricsManager
-                                        )
-                                    case .gauge:
-                                        GaugeMetricView(
-                                            metricName: metric.name,
-                                            description: definition.description,
-                                            values: metric.values,
-                                            labels: metric.labels,
-                                            metricsManager: metricsManager
-                                        )
-                                    case .histogram:
-                                        HistogramMetricView(
-                                            metricName: metric.name,
-                                            description: definition.description,
-                                            values: metric.values,
-                                            labels: metric.labels,
-                                            metricsManager: metricsManager
-                                        )
-                                        .gridCellColumns(columns)
-                                    }
+                                HistogramMetricView(
+                                    metricName: metric.name,
+                                    description: definition.description,
+                                    values: metric.values,
+                                    labels: metric.labels
+                                )
+                                .frame(width: availableWidth)
+                                .frame(minHeight: 400)
+                                .onAppear {
+                                    logger.debug("Histogram view appeared for: \(metric.name)")
                                 }
-                                .frame(minHeight: definition.type == .histogram ? 400 : 300)
                             }
                         }
                     }
@@ -563,9 +669,15 @@ struct MetricsView: View {
             }
         }
         .onAppear {
+            logger.debug("MetricsView appeared")
+            metricsManager.startScraping()
             DispatchQueue.main.asyncAfter(deadline: .now() + 15) {
                 hasInitialData = true
             }
+        }
+        .onDisappear {
+            logger.debug("MetricsView disappeared")
+            metricsManager.stopScraping()
         }
     }
 } 

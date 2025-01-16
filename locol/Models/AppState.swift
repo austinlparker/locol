@@ -5,9 +5,16 @@ class AppState: ObservableObject {
     private let stateKey = "SavedCollectors"
     
     init() {
-        if let data = UserDefaults.standard.data(forKey: stateKey),
-           let decodedCollectors = try? JSONDecoder().decode([CollectorInstance].self, from: data) {
-            self.collectors = decodedCollectors
+        // Try to decode with new format first
+        if let data = UserDefaults.standard.data(forKey: stateKey) {
+            do {
+                self.collectors = try JSONDecoder().decode([CollectorInstance].self, from: data)
+            } catch {
+                AppLogger.shared.error("Failed to decode collectors with new format: \(error)")
+                // If decoding fails, clear the stored data to start fresh
+                UserDefaults.standard.removeObject(forKey: stateKey)
+                self.collectors = []
+            }
         } else {
             self.collectors = []
         }

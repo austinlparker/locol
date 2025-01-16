@@ -1,6 +1,13 @@
 import Foundation
 import os
 
+extension Logger {
+    static func configureLogging() {
+        // Set environment variable to enable debug logging
+        setenv("OS_ACTIVITY_MODE", "debug", 1)
+    }
+}
+
 enum LogLevel: Equatable {
     case debug
     case info

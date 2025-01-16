@@ -1,17 +1,19 @@
 import Foundation
+import Yams
 
 class ProcessManager: ObservableObject {
-    @Published private(set) var runningProcesses: [UUID: Process] = [:]
+    @Published private(set) var activeCollector: (id: UUID, process: Process)? = nil
     private let fileManager: CollectorFileManager
-    private var outputPipes: [UUID: Pipe] = [:]
+    private var outputPipe: Pipe? = nil
     
     init(fileManager: CollectorFileManager) {
         self.fileManager = fileManager
     }
     
     func startCollector(_ collector: CollectorInstance) throws {
-        guard runningProcesses[collector.id] == nil else {
-            throw ProcessError.alreadyRunning
+        if let active = activeCollector {
+            // Stop the currently running collector first
+            try stopCollector()
         }
         
         let process = Process()
@@ -33,12 +35,12 @@ class ProcessManager: ObservableObject {
         let outputPipe = Pipe()
         process.standardOutput = outputPipe
         process.standardError = outputPipe
-        outputPipes[collector.id] = outputPipe
+        self.outputPipe = outputPipe
         
         // Handle process termination
         process.terminationHandler = { [weak self] process in
             DispatchQueue.main.async {
-                self?.handleProcessTermination(collector.id, process)
+                self?.handleProcessTermination(process)
             }
         }
         
@@ -53,52 +55,79 @@ class ProcessManager: ObservableObject {
         }
         
         try process.run()
-        runningProcesses[collector.id] = process
+        activeCollector = (id: collector.id, process: process)
         CollectorLogger.shared.info("[\(collector.name)] Started collector process")
     }
     
-    func stopCollector(_ collector: CollectorInstance) {
-        guard let process = runningProcesses[collector.id] else { return }
+    func stopCollector() throws {
+        guard let active = activeCollector else {
+            throw ProcessError.notRunning
+        }
         
         // Clean up pipe first
-        if let pipe = outputPipes[collector.id] {
+        if let pipe = outputPipe {
             pipe.fileHandleForReading.readabilityHandler = nil
-            outputPipes.removeValue(forKey: collector.id)
+            self.outputPipe = nil
         }
         
         // Terminate process
-        process.terminate()
+        active.process.terminate()
         
         // Wait for process to terminate
-        if process.isRunning {
+        if active.process.isRunning {
             Thread.sleep(forTimeInterval: 0.5) // Give it a moment to terminate gracefully
-            if process.isRunning {
+            if active.process.isRunning {
                 // Force kill if still running
-                kill(process.processIdentifier, SIGKILL)
+                kill(active.process.processIdentifier, SIGKILL)
             }
         }
         
-        handleProcessTermination(collector.id, process)
-        CollectorLogger.shared.info("[\(collector.name)] Stopped collector process")
+        handleProcessTermination(active.process)
+        CollectorLogger.shared.info("Stopped collector process")
     }
     
     func isRunning(_ collector: CollectorInstance) -> Bool {
-        guard let process = runningProcesses[collector.id] else { return false }
-        return process.isRunning
+        guard let active = activeCollector, active.id == collector.id else { return false }
+        return active.process.isRunning
     }
     
-    func getProcess(forCollector collector: CollectorInstance) -> Process? {
-        return runningProcesses[collector.id]
+    func getActiveProcess() -> Process? {
+        return activeCollector?.process
     }
     
-    private func handleProcessTermination(_ id: UUID, _ process: Process) {
-        // Clean up pipe if it wasn't already
-        if let pipe = outputPipes[id] {
-            pipe.fileHandleForReading.readabilityHandler = nil
-            outputPipes.removeValue(forKey: id)
+    func getCollectorComponents(_ collector: CollectorInstance) async throws -> ComponentList {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: collector.binaryPath)
+        process.arguments = ["components"]
+        
+        let outputPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = Pipe() // Redirect stderr to avoid mixing with stdout
+        
+        try process.run()
+        
+        let outputData = try outputPipe.fileHandleForReading.readToEnd() ?? Data()
+        let outputString = String(data: outputData, encoding: .utf8) ?? ""
+        
+        // Wait for process to finish
+        process.waitUntilExit()
+        
+        guard process.terminationStatus == 0 else {
+            throw ProcessError.componentsFailed
         }
         
-        runningProcesses.removeValue(forKey: id)
+        // Parse YAML output using Yams
+        return try YAMLDecoder().decode(ComponentList.self, from: outputString)
+    }
+    
+    private func handleProcessTermination(_ process: Process) {
+        // Clean up pipe if it wasn't already
+        if let pipe = outputPipe {
+            pipe.fileHandleForReading.readabilityHandler = nil
+            self.outputPipe = nil
+        }
+        
+        activeCollector = nil
         
         // Log termination status
         if process.terminationStatus != 0 {
@@ -109,6 +138,8 @@ class ProcessManager: ObservableObject {
 
 enum ProcessError: Error {
     case alreadyRunning
+    case notRunning
     case configurationError(String)
     case startupError(String)
+    case componentsFailed
 } 

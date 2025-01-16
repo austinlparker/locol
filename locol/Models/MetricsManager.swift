@@ -1,17 +1,6 @@
 import Foundation
 import Combine
-
-enum MetricType {
-    case counter
-    case histogram
-    case gauge
-}
-
-struct MetricDefinition {
-    let name: String
-    let description: String
-    let type: MetricType
-}
+import os
 
 struct PrometheusMetric {
     let name: String
@@ -20,309 +9,292 @@ struct PrometheusMetric {
     let timestamp: Date
 }
 
-struct TimeSeriesData {
-    let name: String
-    let labels: [String: String]
-    var values: [(timestamp: Date, value: Double, labels: [String: String])]
-    let definition: MetricDefinition?
-    
-    // Keep last hour of data by default
-    let maxAge: TimeInterval = 3600
-    
-    mutating func addValue(_ value: Double, at timestamp: Date) {
-        values.append((timestamp: timestamp, value: value, labels: labels))
-        // Clean up old values
-        let cutoff = Date().addingTimeInterval(-maxAge)
-        values.removeAll { $0.timestamp < cutoff }
-    }
-}
-
-struct HistogramData {
-    var buckets: [(le: Double, count: Double)]
-    var sum: Double
-    var count: Double
-    let timestamp: Date
-    
-    func percentile(_ p: Double) -> Double {
-        guard !buckets.isEmpty && count > 0 else { return 0 }
-        
-        let rank = (p / 100.0) * count
-        var prev = (le: -Double.infinity, count: 0.0)
-        
-        for bucket in buckets {
-            if bucket.count >= rank {
-                // Linear interpolation between bucket boundaries
-                if bucket.count == prev.count {
-                    return bucket.le
-                }
-                let fraction = (rank - prev.count) / (bucket.count - prev.count)
-                return prev.le + fraction * (bucket.le - prev.le)
-            }
-            prev = bucket
-        }
-        
-        // If we haven't found it yet, use the highest finite bucket
-        return buckets.last(where: { !$0.le.isInfinite })?.le ?? 0
-    }
-    
-    var average: Double {
-        count > 0 ? sum / count : 0
-    }
-}
-
 class MetricsManager: ObservableObject {
+    static let shared = MetricsManager()
+    
     @Published private(set) var metrics: [String: TimeSeriesData] = [:] {
         willSet {
+            logger.debug("Updating metrics dictionary")
             objectWillChange.send()
         }
     }
     private var metricDefinitions: [String: MetricDefinition] = [:]
-    @Published private(set) var histogramData: [String: [HistogramData]] = [:] // Key -> time series of histogram data
+    @Published private(set) var histogramData: [String: [HistogramData]] = [:]
+    private var histogramBuckets: [String: [(le: Double, count: Double)]] = [:]
+    private var histogramSums: [String: Double] = [:]
     private var timer: Timer?
-    private let scrapeInterval: TimeInterval = 15 // 15 seconds
+    private let scrapeInterval: TimeInterval = 15
     private var cancellables = Set<AnyCancellable>()
+    private let logger = Logger(subsystem: "io.aparker.locol", category: "MetricsManager")
     
-    init() {
-        startScraping()
+    private init() {
+        logger.debug("MetricsManager initialized")
     }
     
-    private func startScraping() {
+    deinit {
+        logger.debug("MetricsManager being deallocated")
+        stopScraping()
+    }
+    
+    func startScraping() {
+        logger.debug("Starting metrics scraping")
+        stopScraping() // Ensure we don't have multiple timers
         timer = Timer.scheduledTimer(withTimeInterval: scrapeInterval, repeats: true) { [weak self] _ in
             self?.scrapeMetrics()
         }
+        // Do an initial scrape
+        scrapeMetrics()
+    }
+    
+    func stopScraping() {
+        logger.debug("Stopping metrics scraping")
+        timer?.invalidate()
+        timer = nil
     }
     
     private func scrapeMetrics() {
-        guard let url = URL(string: "http://localhost:8888/metrics") else { return }
+        guard let url = URL(string: "http://localhost:8888/metrics") else {
+            logger.error("Failed to create metrics URL")
+            return
+        }
         
-        URLSession.shared.dataTaskPublisher(for: url)
-            .map { String(data: $0.data, encoding: .utf8) }
-            .receive(on: DispatchQueue.main)
-            .sink(
-                receiveCompletion: { completion in
-                    if case .failure(let error) = completion {
-                        CollectorLogger.shared.error("Failed to scrape metrics: \(error)")
-                    }
-                },
-                receiveValue: { [weak self] metricsData in
-                    if let metricsString = metricsData {
-                        self?.parseAndStoreMetrics(metricsString)
-                    }
-                }
-            )
-            .store(in: &cancellables)
+        let task = URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
+            if let error = error {
+                self?.logger.error("Network error while scraping metrics: \(error.localizedDescription)")
+                return
+            }
+            
+            guard let data = data else {
+                self?.logger.error("No data received from metrics endpoint")
+                return
+            }
+            
+            guard let metricsString = String(data: data, encoding: .utf8) else {
+                self?.logger.error("Failed to decode metrics data as UTF-8")
+                return
+            }
+            
+            DispatchQueue.main.async {
+                self?.parseAndStoreMetrics(metricsString)
+            }
+        }
+        task.resume()
     }
     
     private func parseAndStoreMetrics(_ metricsString: String) {
+        logger.debug("Parsing metrics string of length: \(metricsString.count)")
+        
+        // Split into blocks separated by # HELP or # TYPE
         let lines = metricsString.components(separatedBy: .newlines)
-        let now = Date()
+        var currentMetric: (name: String, help: String?, type: MetricType?, values: [(labels: [String: String], value: Double)])? = nil
         
-        var currentHelp: String?
-        var currentType: MetricType?
-        var currentName: String?
-        
-        // First pass: collect all metric metadata
         for line in lines {
-            if line.hasPrefix("# HELP ") {
-                let parts = line.dropFirst(7).split(separator: " ", maxSplits: 1)
-                if parts.count == 2 {
-                    currentName = String(parts[0])
-                    currentHelp = String(parts[1])
-                }
-            } else if line.hasPrefix("# TYPE ") {
-                let parts = line.dropFirst(7).split(separator: " ", maxSplits: 1)
-                if parts.count == 2 {
-                    let name = String(parts[0])
-                    currentName = name // Update currentName with the TYPE line name
-                    currentType = parseMetricType(String(parts[1]))
-                    if let help = currentHelp, let type = currentType {
-                        metricDefinitions[name] = MetricDefinition(
-                            name: name,
-                            description: help,
-                            type: type
-                        )
-                    }
-                }
-            }
-        }
-        
-        // Temporary storage for histogram data being processed
-        var currentHistogramBuckets: [(le: Double, count: Double)] = []
-        var currentHistogramSum: Double?
-        var currentHistogramCount: Double?
-        var currentHistogramName: String?
-        var currentHistogramLabels: [String: String]?
-        
-        // Second pass: process metric values
-        for line in lines {
-            if !line.isEmpty && !line.hasPrefix("#") {
-                if let metric = parseMetricLine(line) {
-                    if metric.name.hasSuffix("_bucket") {
-                        // Extract the base name (remove _bucket suffix)
-                        let baseName = String(metric.name.dropLast(7))
-                        if let le = metric.labels["le"]?.replacingOccurrences(of: "+Inf", with: "inf"),
-                           let leValue = Double(le) {
-                            currentHistogramName = baseName
-                            currentHistogramLabels = metric.labels
-                            currentHistogramBuckets.append((le: leValue, count: metric.value))
-                        }
-                    } else if metric.name.hasSuffix("_sum") {
-                        currentHistogramSum = metric.value
-                    } else if metric.name.hasSuffix("_count") {
-                        currentHistogramCount = metric.value
-                    } else {
-                        let key = metricKey(name: metric.name, labels: metric.labels)
-                        updateMetric(key: key, value: metric.value, at: now)
-                    }
-                }
-            }
-        }
-        
-        // Process any remaining histogram data
-        if let name = currentHistogramName,
-           let sum = currentHistogramSum,
-           let count = currentHistogramCount {
-            processHistogramData(name: name,
-                               labels: currentHistogramLabels ?? [:],
-                               buckets: currentHistogramBuckets,
-                               sum: sum,
-                               count: count,
-                               timestamp: now)
-        }
-    }
-    
-    private func processHistogramData(name: String, labels: [String: String], buckets: [(le: Double, count: Double)], sum: Double, count: Double, timestamp: Date) {
-        // Get the base name for the histogram
-        let baseName = name.hasSuffix("_bucket") ? String(name.dropLast(7)) : name
-        let key = metricKey(name: baseName, labels: labels)
-        
-        // Sort buckets by le value and ensure +Inf is at the end
-        let sortedBuckets = buckets.sorted { 
-            if $0.le.isInfinite && !$1.le.isInfinite { return false }
-            if !$0.le.isInfinite && $1.le.isInfinite { return true }
-            return $0.le < $1.le 
-        }
-        
-        let histData = HistogramData(buckets: sortedBuckets, sum: sum, count: count, timestamp: timestamp)
-        
-        // Store the raw histogram data
-        if var series = histogramData[key] {
-            series.append(histData)
-            // Keep only recent data
-            let cutoff = Date().addingTimeInterval(-3600) // 1 hour
-            series.removeAll { $0.timestamp < cutoff }
-            histogramData[key] = series
-        } else {
-            histogramData[key] = [histData]
-        }
-        
-        // Store the base metric with the average value
-        if var timeSeriesData = metrics[key] {
-            timeSeriesData.addValue(histData.average, at: timestamp)
-            metrics[key] = timeSeriesData
-        } else {
-            let definition = metricDefinitions[baseName] ?? MetricDefinition(
-                name: baseName,
-                description: "Histogram metric",
-                type: .histogram
-            )
-            metrics[key] = TimeSeriesData(
-                name: baseName,
-                labels: labels,
-                values: [(timestamp: timestamp, value: histData.average, labels: labels)],
-                definition: definition
-            )
-        }
-        
-        // Calculate and store percentile values
-        let percentiles = [50.0, 90.0, 99.0] // median, p90, p99
-        for p in percentiles {
-            let percentileName = "\(baseName)_p\(Int(p))"
-            let percentileKey = metricKey(name: percentileName, labels: labels)
-            let value = histData.percentile(p)
+            let trimmedLine = line.trimmingCharacters(in: .whitespaces)
+            if trimmedLine.isEmpty { continue }
             
-            if var timeSeriesData = metrics[percentileKey] {
-                timeSeriesData.addValue(value, at: timestamp)
-                metrics[percentileKey] = timeSeriesData
-            } else {
-                let definition = MetricDefinition(
-                    name: percentileName,
-                    description: "P\(Int(p)) percentile of \(baseName)",
-                    type: .gauge
-                )
-                metrics[percentileKey] = TimeSeriesData(
-                    name: percentileName,
-                    labels: labels,
-                    values: [(timestamp: timestamp, value: value, labels: labels)],
-                    definition: definition
-                )
+            if trimmedLine.starts(with: "# HELP") {
+                // Store previous metric if exists
+                if let metric = currentMetric {
+                    processMetric(metric)
+                }
+                
+                // Start new metric
+                let parts = trimmedLine.components(separatedBy: " ")
+                guard parts.count >= 3 else { continue }
+                let name = parts[2]
+                let help = parts.dropFirst(3).joined(separator: " ")
+                currentMetric = (name: name, help: help, type: nil, values: [])
+                
+            } else if trimmedLine.starts(with: "# TYPE") {
+                let parts = trimmedLine.components(separatedBy: " ")
+                guard parts.count >= 4 else { continue }
+                let name = parts[2]
+                let typeStr = parts[3]
+                
+                if currentMetric == nil || currentMetric?.name != name {
+                    // Start new metric if no HELP line or if name doesn't match
+                    currentMetric = (name: name, help: nil, type: nil, values: [])
+                }
+                
+                // Update type
+                if let type = MetricType(rawValue: typeStr) {
+                    currentMetric?.type = type
+                }
+                
+            } else if let metric = currentMetric {
+                // Parse metric value line
+                if let (labels, value) = parseMetricLine(trimmedLine) {
+                    currentMetric?.values.append((labels: labels, value: value))
+                }
             }
         }
-    }
-    
-    private func parseMetricType(_ typeString: String) -> MetricType {
-        switch typeString {
-        case "counter":
-            return .counter
-        case "histogram":
-            return .histogram
-        case "gauge":
-            return .gauge
-        default:
-            // Default to gauge for unknown types
-            return .gauge
+        
+        // Process last metric
+        if let metric = currentMetric {
+            processMetric(metric)
         }
     }
     
-    private func parseMetricLine(_ line: String) -> PrometheusMetric? {
-        let components = line.split(separator: " ")
-        guard components.count >= 2,
-              let value = Double(String(components.last!)) else { return nil }
+    private func processMetric(_ metric: (name: String, help: String?, type: MetricType?, values: [(labels: [String: String], value: Double)])) {
+        guard let type = metric.type else { return }
         
-        let nameAndLabels = String(components[0])
-        let (name, labels) = parseNameAndLabels(nameAndLabels)
+        logger.debug("Processing metric: \(metric.name) of type \(type.rawValue)")
         
-        return PrometheusMetric(
-            name: name,
-            labels: labels,
-            value: value,
-            timestamp: Date()
+        // Create or update metric definition
+        let definition = MetricDefinition(
+            name: metric.name,
+            description: metric.help ?? "",
+            type: type
         )
+        metricDefinitions[metric.name] = definition
+        
+        // For histograms, we need to process both the base metric and its components
+        if type == .histogram {
+            let baseName = MetricFilter.getBaseName(metric.name)
+            
+            // If this is a histogram component, process it
+            if MetricFilter.isHistogramComponent(metric.name) {
+                processHistogramComponent(metric: metric.name, values: metric.values)
+                return
+            }
+            
+            // For the base histogram metric or buckets, ensure we have a TimeSeriesData entry
+            for (labels, value) in metric.values {
+                let key = metricKey(name: baseName, labels: labels)
+                if metrics[key] == nil {
+                    metrics[key] = TimeSeriesData(
+                        name: baseName,
+                        labels: labels,
+                        values: [],
+                        definition: MetricDefinition(
+                            name: baseName,
+                            description: definition.description,
+                            type: .histogram
+                        )
+                    )
+                }
+                // Add the value to the time series
+                metrics[key]?.values.append((
+                    timestamp: Date(),
+                    value: value,
+                    labels: labels
+                ))
+            }
+        } else {
+            // For counters and gauges, store values directly
+            for (labels, value) in metric.values {
+                let key = metricKey(name: metric.name, labels: labels)
+                if metrics[key] == nil {
+                    metrics[key] = TimeSeriesData(
+                        name: metric.name,
+                        labels: labels,
+                        values: [],
+                        definition: definition
+                    )
+                }
+                metrics[key]?.values.append((
+                    timestamp: Date(),
+                    value: value,
+                    labels: labels
+                ))
+            }
+        }
     }
     
-    private func parseNameAndLabels(_ nameAndLabels: String) -> (String, [String: String]) {
+    private func processHistogramComponent(metric name: String, values: [(labels: [String: String], value: Double)]) {
+        let baseName = MetricFilter.getBaseName(name)
+        
+        for (labels, value) in values {
+            if name.hasSuffix("_bucket") {
+                if let le = labels["le"]?.replacingOccurrences(of: "+Inf", with: "inf"),
+                   let leValue = Double(le) {
+                    let key = metricKey(name: baseName, labels: labels)
+                    if histogramBuckets[key] == nil {
+                        histogramBuckets[key] = []
+                    }
+                    histogramBuckets[key]?.append((le: leValue, count: value))
+                    logger.debug("Added bucket for \(key): le=\(leValue), count=\(value)")
+                }
+            } else if name.hasSuffix("_sum") {
+                let key = metricKey(name: baseName, labels: labels)
+                histogramSums[key] = value
+                logger.debug("Added sum for \(key): \(value)")
+            } else if name.hasSuffix("_count") {
+                let key = metricKey(name: baseName, labels: labels)
+                processHistogramCount(baseKey: key, labels: labels, value: value)
+                logger.debug("Processed count for \(key): \(value)")
+            }
+        }
+    }
+    
+    private func processHistogramCount(baseKey: String, labels: [String: String], value: Double) {
+        if let buckets = histogramBuckets[baseKey]?.sorted(by: { $0.le < $1.le }),
+           let sum = histogramSums[baseKey] {
+            let histogram = HistogramData(
+                buckets: buckets,
+                sum: sum,
+                count: value,
+                timestamp: Date()
+            )
+            
+            if histogramData[baseKey] == nil {
+                histogramData[baseKey] = []
+            }
+            histogramData[baseKey]?.append(histogram)
+            
+            // Update the base metric
+            if let definition = metricDefinitions[baseKey] {
+                if metrics[baseKey] == nil {
+                    metrics[baseKey] = TimeSeriesData(
+                        name: baseKey,
+                        labels: labels,
+                        values: [],
+                        definition: definition
+                    )
+                }
+                metrics[baseKey]?.values.append((
+                    timestamp: histogram.timestamp,
+                    value: histogram.average,
+                    labels: labels
+                ))
+            }
+        }
+    }
+    
+    private func parseMetricLine(_ line: String) -> (labels: [String: String], value: Double)? {
+        let parts = line.components(separatedBy: " ")
+        guard parts.count >= 2,
+              let value = Double(parts[parts.count - 1]) else { return nil }
+        
+        // Extract metric name and labels
+        let nameAndLabels = parts[0]
+        var labels: [String: String] = [:]
+        
         if let openBrace = nameAndLabels.firstIndex(of: "{"),
-           let closeBrace = nameAndLabels.lastIndex(of: "}") {
-            let name = String(nameAndLabels[..<openBrace])
-            let labelsString = String(nameAndLabels[openBrace...closeBrace])
-            
-            // Parse labels
-            var labels: [String: String] = [:]
-            let labelPairs = labelsString.dropFirst().dropLast().split(separator: ",")
-            
+           let closeBrace = nameAndLabels.lastIndex(of: "}"),
+           openBrace < closeBrace {
+            let labelsPart = nameAndLabels[nameAndLabels.index(after: openBrace)..<closeBrace]
+            let labelPairs = labelsPart.components(separatedBy: ",")
             for pair in labelPairs {
-                let parts = pair.split(separator: "=", maxSplits: 1)
-                if parts.count == 2 {
-                    let key = String(parts[0].trimmingCharacters(in: .whitespaces))
-                    var value = String(parts[1].trimmingCharacters(in: .whitespaces))
-                    // Remove quotes if present
+                let keyValue = pair.components(separatedBy: "=")
+                if keyValue.count == 2 {
+                    let key = keyValue[0].trimmingCharacters(in: .whitespaces)
+                    var value = keyValue[1].trimmingCharacters(in: .whitespaces)
                     if value.hasPrefix("\"") && value.hasSuffix("\"") {
                         value = String(value.dropFirst().dropLast())
                     }
                     labels[key] = value
                 }
             }
-            
-            return (name, labels)
         }
         
-        return (nameAndLabels, [:])
+        return (labels: labels, value: value)
     }
     
     func metricKey(name: String, labels: [String: String]) -> String {
-        // Filter out service-related labels and "le" label
+        // Filter out "le" label but keep service labels
         let relevantLabels = labels.filter { key, _ in
-            !key.hasPrefix("service.") && key != "le"
+            key != "le"
         }
         
         // If no relevant labels, return the base name
@@ -346,31 +318,18 @@ class MetricsManager: ObservableObject {
         return metrics.first(where: { $0.value.name == baseName })?.value.values
     }
     
-    deinit {
-        timer?.invalidate()
-    }
-    
     private func createDefaultDefinition(for metricName: String) -> MetricDefinition {
-        // Attempt to infer type from name based on OpenMetrics spec
-        let type: MetricType
-        if metricName.hasSuffix("_total") {
-            // Counter metrics end in _total
-            type = .counter
-        } else if metricName.hasSuffix("_bucket") {
-            // Histogram metrics have _bucket suffix
-            type = .histogram
-        } else if metricName.hasSuffix("_sum") || metricName.hasSuffix("_count") {
-            // These belong to histogram/summary metrics, but we'll treat their values as gauges
-            type = .gauge
-        } else {
-            // Default to gauge for everything else
-            type = .gauge
+        // Only infer type if we don't have an explicit type from # TYPE
+        if let definition = metricDefinitions[metricName] {
+            return definition
         }
         
+        // Default to gauge for everything else
+        logger.debug("No explicit type found for \(metricName), defaulting to gauge")
         return MetricDefinition(
             name: metricName,
             description: "Metric: \(metricName)",
-            type: type
+            type: .gauge
         )
     }
     
@@ -428,5 +387,85 @@ class MetricsManager: ObservableObject {
         }
         
         return labels
+    }
+    
+    private func processHistogramData(name: String, labels: [String: String], buckets: [(le: Double, count: Double)], sum: Double, count: Double, timestamp: Date) {
+        let key = metricKey(name: name, labels: labels)
+        
+        // Get existing histogram data or create new
+        var histogramSeries = histogramData[key] ?? []
+        
+        // Update or create histogram data
+        if let lastIndex = histogramSeries.lastIndex(where: { $0.timestamp == timestamp }) {
+            var updatedData = histogramSeries[lastIndex]
+            if sum > 0 {
+                updatedData.sum = sum
+            }
+            if count > 0 {
+                updatedData.count = count
+            }
+            updatedData.buckets = buckets
+            histogramSeries[lastIndex] = updatedData
+        } else {
+            histogramSeries.append(HistogramData(
+                buckets: buckets,
+                sum: sum,
+                count: count,
+                timestamp: timestamp
+            ))
+        }
+        
+        // Keep only recent data
+        let cutoff = Date().addingTimeInterval(-3600) // 1 hour
+        histogramSeries.removeAll { $0.timestamp < cutoff }
+        
+        // Update histogram data
+        histogramData[key] = histogramSeries
+        
+        // Update base metric with average value
+        if let lastHistogram = histogramSeries.last {
+            let definition = metricDefinitions[name] ?? MetricDefinition(
+                name: name,
+                description: "Histogram metric",
+                type: .histogram
+            )
+            
+            if var timeSeriesData = metrics[key] {
+                timeSeriesData.addValue(lastHistogram.average, at: timestamp)
+                metrics[key] = timeSeriesData
+            } else {
+                metrics[key] = TimeSeriesData(
+                    name: name,
+                    labels: labels,
+                    values: [(timestamp: timestamp, value: lastHistogram.average, labels: labels)],
+                    definition: definition
+                )
+            }
+            
+            // Calculate and store percentile values
+            let percentiles = [50.0, 90.0, 99.0] // median, p90, p99
+            for p in percentiles {
+                let percentileName = "\(name)_p\(Int(p))"
+                let percentileKey = metricKey(name: percentileName, labels: labels)
+                let value = lastHistogram.percentile(p)
+                
+                if var timeSeriesData = metrics[percentileKey] {
+                    timeSeriesData.addValue(value, at: timestamp)
+                    metrics[percentileKey] = timeSeriesData
+                } else {
+                    let definition = MetricDefinition(
+                        name: percentileName,
+                        description: "P\(Int(p)) percentile of \(name)",
+                        type: .gauge
+                    )
+                    metrics[percentileKey] = TimeSeriesData(
+                        name: percentileName,
+                        labels: labels,
+                        values: [(timestamp: timestamp, value: value, labels: labels)],
+                        definition: definition
+                    )
+                }
+            }
+        }
     }
 } 
