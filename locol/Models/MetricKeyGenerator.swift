@@ -5,9 +5,9 @@ class MetricKeyGenerator {
     private static let logger = Logger(subsystem: "io.aparker.locol", category: "MetricKeyGenerator")
     
     static func generateKey(name: String, labels: [String: String]) -> String {
-        // Filter out "le" label but keep service labels
+        // Filter out "le" and "__name__" labels but keep service labels
         let relevantLabels = labels.filter { key, _ in
-            key != "le"
+            key != "le" && key != "__name__"
         }
         
         // If no relevant labels, return the base name

@@ -20,7 +20,7 @@ struct CounterData {
         return valueDelta / timeDelta
     }
     
-    static func calculateRate(for values: [(timestamp: Date, value: Double, labels: [String: String])], timeWindow: TimeInterval = 300) -> Double? {
+    static func calculateRate(for values: [(timestamp: Date, value: Double, labels: [String: String], histogram: HistogramMetric?)], timeWindow: TimeInterval = 300) -> Double? {
         guard let latest = values.last else { return nil }
         
         // Find the oldest sample within the time window

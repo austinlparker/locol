@@ -8,19 +8,18 @@ struct MetricsView: View {
     private let logger = Logger(subsystem: "io.aparker.locol", category: "MetricsView")
     
     private var groupedMetrics: (regular: [(String, TimeSeriesData)], histograms: [(String, TimeSeriesData)]) {
-        // Get regular metrics (counters and gauges)
-        let regular = metricsManager.metrics
-            .filter { (key: String, value: TimeSeriesData) in
-                guard let type = value.definition?.type else { return false }
-                return type == .counter || type == .gauge
-            }
-            .sorted { $0.key < $1.key }
+        let allMetrics = metricsManager.metrics.sorted { $0.key < $1.key }
         
-        // Get histograms directly from histogramData
-        let histograms = metricsManager.histogramData.compactMap { (key: String, histogramArray: [HistogramData]) -> (String, TimeSeriesData)? in
-            guard let metric = metricsManager.metrics[key] else { return nil }
-            return (key, metric)
-        }.sorted { $0.0 < $1.0 }
+        // Split metrics by type
+        let regular = allMetrics.filter { (key: String, value: TimeSeriesData) in
+            guard let type = value.definition?.type else { return false }
+            return type == .counter || type == .gauge
+        }
+        
+        let histograms = allMetrics.filter { (key: String, value: TimeSeriesData) in
+            guard let type = value.definition?.type else { return false }
+            return type == .histogram
+        }
         
         return (regular: regular, histograms: histograms)
     }
@@ -55,7 +54,9 @@ struct MetricsView: View {
                 if !groupedMetrics.histograms.isEmpty {
                     Section {
                         ForEach(groupedMetrics.histograms, id: \.0) { key, metric in
-                            HistogramCard(metric: metric)
+                            if let histogram = metric.values.last?.histogram {
+                                HistogramCard(metric: histogram, name: key)
+                            }
                         }
                     } header: {
                         Text("Histograms")
@@ -172,13 +173,13 @@ struct GaugeCard: View {
 }
 
 struct HistogramCard: View {
-    let metric: TimeSeriesData
-    @ObservedObject private var metricsManager = MetricsManager.shared
+    let metric: HistogramMetric
+    let name: String
     
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             // Header
-            Text(metric.name)
+            Text(name)
                 .font(.headline)
             if !metric.labels.isEmpty {
                 Text(formatLabels(metric.labels))
@@ -186,21 +187,12 @@ struct HistogramCard: View {
                     .foregroundStyle(.secondary)
             }
             
-            if let histogramData = getCurrentHistogram() {
-                HistogramChartView(histogramData: histogramData)
-            } else {
-                Text("No histogram data available")
-                    .foregroundStyle(.secondary)
-            }
+            // Histogram chart
+            HistogramChartView(histogram: metric)
         }
         .padding()
         .background(Color(nsColor: .windowBackgroundColor))
         .cornerRadius(8)
-    }
-    
-    private func getCurrentHistogram() -> HistogramData? {
-        let key = MetricKeyGenerator.generateKey(name: metric.name, labels: metric.labels)
-        return metricsManager.histogramData[key]?.last
     }
 }
 

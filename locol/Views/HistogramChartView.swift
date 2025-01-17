@@ -2,15 +2,17 @@ import SwiftUI
 import Charts
 
 struct HistogramChartView: View {
-    let histogramData: HistogramData
-    @State private var selectedBucket: (le: Double, count: Double)? = nil
+    let histogram: HistogramMetric
+    @State private var selectedBucket: (upperBound: Double, count: Double)? = nil
     
-    private var nonInfBuckets: [(le: Double, count: Double)] {
-        histogramData.buckets.filter { !$0.le.isInfinite }
+    private var nonInfBuckets: [(upperBound: Double, count: Double)] {
+        histogram.buckets.filter { !$0.upperBound.isInfinite }
+            .sorted { $0.upperBound < $1.upperBound }
+            .map { (upperBound: $0.upperBound, count: $0.count) }
     }
     
     private var maxCount: Double {
-        histogramData.buckets.map(\.count).max() ?? 0
+        histogram.buckets.map(\.count).max() ?? 0
     }
     
     private func formatBucketLabel(_ value: Double) -> String {
@@ -33,12 +35,20 @@ struct HistogramChartView: View {
         VStack(alignment: .leading, spacing: 8) {
             // Stats row
             HStack(spacing: 16) {
-                StatBox(title: "Count", value: String(format: "%.0f", histogramData.count))
-                StatBox(title: "Sum", value: String(format: "%.2f", histogramData.sum))
-                StatBox(title: "Average", value: String(format: "%.2f", histogramData.average))
-                StatBox(title: "Median", value: String(format: "%.2f", histogramData.median))
-                StatBox(title: "p95", value: String(format: "%.2f", histogramData.p95))
-                StatBox(title: "p99", value: String(format: "%.2f", histogramData.p99))
+                StatBox(title: "Count", value: String(format: "%.0f", histogram.count))
+                StatBox(title: "Sum", value: String(format: "%.2f", histogram.sum))
+                if let avg = histogram.average {
+                    StatBox(title: "Average", value: String(format: "%.2f", avg))
+                }
+                if let p50 = histogram.p50 {
+                    StatBox(title: "Median", value: String(format: "%.2f", p50))
+                }
+                if let p95 = histogram.p95 {
+                    StatBox(title: "p95", value: String(format: "%.2f", p95))
+                }
+                if let p99 = histogram.p99 {
+                    StatBox(title: "p99", value: String(format: "%.2f", p99))
+                }
             }
             
             // Chart
@@ -50,7 +60,7 @@ struct HistogramChartView: View {
                     let bucketValue = bucket.count - previousCount
                     
                     BarMark(
-                        x: .value("Upper Bound", formatBucketLabel(bucket.le)),
+                        x: .value("Upper Bound", formatBucketLabel(bucket.upperBound)),
                         y: .value("Count", bucketValue)
                     )
                     .foregroundStyle(.blue.opacity(0.3))
@@ -60,7 +70,7 @@ struct HistogramChartView: View {
                 ForEach(nonInfBuckets.indices, id: \.self) { index in
                     let bucket = nonInfBuckets[index]
                     LineMark(
-                        x: .value("Upper Bound", formatBucketLabel(bucket.le)),
+                        x: .value("Upper Bound", formatBucketLabel(bucket.upperBound)),
                         y: .value("Cumulative", bucket.count)
                     )
                     .foregroundStyle(.blue)
@@ -68,23 +78,29 @@ struct HistogramChartView: View {
                 }
                 
                 // Percentile markers
-                RuleMark(
-                    x: .value("Median", formatBucketLabel(histogramData.median))
-                )
-                .foregroundStyle(.green)
-                .lineStyle(StrokeStyle(lineWidth: 1, dash: [5, 5]))
+                if let p50 = histogram.p50 {
+                    RuleMark(
+                        x: .value("Median", formatBucketLabel(p50))
+                    )
+                    .foregroundStyle(.green)
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [5, 5]))
+                }
                 
-                RuleMark(
-                    x: .value("p95", formatBucketLabel(histogramData.p95))
-                )
-                .foregroundStyle(.orange)
-                .lineStyle(StrokeStyle(lineWidth: 1, dash: [5, 5]))
+                if let p95 = histogram.p95 {
+                    RuleMark(
+                        x: .value("p95", formatBucketLabel(p95))
+                    )
+                    .foregroundStyle(.orange)
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [5, 5]))
+                }
                 
-                RuleMark(
-                    x: .value("p99", formatBucketLabel(histogramData.p99))
-                )
-                .foregroundStyle(.red)
-                .lineStyle(StrokeStyle(lineWidth: 1, dash: [5, 5]))
+                if let p99 = histogram.p99 {
+                    RuleMark(
+                        x: .value("p99", formatBucketLabel(p99))
+                    )
+                    .foregroundStyle(.red)
+                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [5, 5]))
+                }
             }
             .chartYAxis {
                 AxisMarks(position: .leading)
@@ -123,7 +139,7 @@ struct HistogramChartView: View {
             // Selected bucket info
             if let bucket = selectedBucket {
                 HStack {
-                    Text("≤ \(formatBucketLabel(bucket.le))")
+                    Text("≤ \(formatBucketLabel(bucket.upperBound))")
                         .foregroundStyle(.secondary)
                     Text("Count: \(String(format: "%.0f", bucket.count))")
                         .foregroundStyle(.primary)
@@ -134,7 +150,7 @@ struct HistogramChartView: View {
         }
     }
     
-    private func findBucket(at x: CGFloat, proxy: ChartProxy, geometry: GeometryProxy) -> (le: Double, count: Double)? {
+    private func findBucket(at x: CGFloat, proxy: ChartProxy, geometry: GeometryProxy) -> (upperBound: Double, count: Double)? {
         let relativeX = x / geometry[proxy.plotAreaFrame].width
         let bucketWidth = geometry[proxy.plotAreaFrame].width / CGFloat(nonInfBuckets.count)
         let index = Int(relativeX * CGFloat(nonInfBuckets.count))
@@ -164,19 +180,20 @@ struct StatBox: View {
 }
 
 #Preview {
-    let buckets = [
-        (le: 0.1, count: 10.0),
-        (le: 0.2, count: 25.0),
-        (le: 0.5, count: 45.0),
-        (le: 1.0, count: 80.0),
-        (le: Double.infinity, count: 100.0)
+    let previewBuckets = [
+        HistogramMetric.Bucket(upperBound: 0.1, count: 10.0),
+        HistogramMetric.Bucket(upperBound: 0.2, count: 25.0),
+        HistogramMetric.Bucket(upperBound: 0.5, count: 45.0),
+        HistogramMetric.Bucket(upperBound: 1.0, count: 80.0),
+        HistogramMetric.Bucket(upperBound: Double.infinity, count: 100.0)
     ]
     
-    return HistogramChartView(histogramData: HistogramData(
-        buckets: buckets,
+    HistogramChartView(histogram: HistogramMetric(
+        timestamp: Date(),
+        labels: [:],
+        buckets: previewBuckets,
         sum: 75.0,
-        count: 100.0,
-        timestamp: Date()
+        count: 100.0
     ))
     .padding()
 } 

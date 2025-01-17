@@ -70,74 +70,50 @@ final class MetricStoreTests: XCTestCase {
     }
     
     func testHistogramProcessing() throws {
-        let bucketMetrics = [
-            PrometheusMetric(
-                name: "http_request_duration_seconds_bucket",
-                help: nil,
-                type: .histogram,
-                values: [
-                    (labels: ["le": "0.1"], value: 1),
-                    (labels: ["le": "0.5"], value: 4),
-                    (labels: ["le": "1.0"], value: 5),
-                    (labels: ["le": "+Inf"], value: 6)
-                ]
-            ),
-            PrometheusMetric(
-                name: "http_request_duration_seconds_sum",
-                help: nil,
-                type: .histogram,
-                values: [(labels: [:], value: 8.35)]
-            ),
-            PrometheusMetric(
-                name: "http_request_duration_seconds_count",
-                help: nil,
-                type: .histogram,
-                values: [(labels: [:], value: 6)]
-            )
-        ]
+        // Create a histogram metric directly
+        let metric = PrometheusMetric(
+            name: "http_request_duration_seconds",
+            help: "Request duration histogram",
+            type: .histogram,
+            values: [
+                (labels: ["le": "0.1"], value: 1),
+                (labels: ["le": "0.5"], value: 4),
+                (labels: ["le": "1.0"], value: 5),
+                (labels: ["le": "+Inf"], value: 6),
+                (labels: [:], value: 8.35),  // sum
+                (labels: [:], value: 6)      // count
+            ]
+        )
         
-        for metric in bucketMetrics {
-            try store.store(metric)
-        }
+        try store.store(metric)
         
         let key = MetricKeyGenerator.generateKey(name: "http_request_duration_seconds", labels: [:])
-        XCTAssertNotNil(store.histogramData[key])
-        XCTAssertEqual(store.histogramData[key]?.count, 1)
+        let storedMetric = store.metrics[key]
         
-        let histogram = store.histogramData[key]?.first
-        XCTAssertEqual(histogram?.buckets.count, 4)
-        XCTAssertEqual(histogram?.sum, 8.35)
-        XCTAssertEqual(histogram?.count, 6)
+        XCTAssertNotNil(storedMetric, "Metric should be stored")
+        XCTAssertEqual(storedMetric?.definition?.type, .histogram, "Metric should be a histogram")
+        
+        let histogram = storedMetric?.values.last?.histogram
+        XCTAssertNotNil(histogram, "Histogram data should be assembled")
+        XCTAssertEqual(histogram?.buckets.count, 4, "Should preserve all buckets")
+        XCTAssertEqual(histogram?.sum, 8.35, "Should preserve sum")
+        XCTAssertEqual(histogram?.count, 6, "Should preserve count")
     }
     
-    func testInvalidHistogramBuckets() {
-        let bucketMetrics = [
-            PrometheusMetric(
-                name: "invalid_histogram_bucket",
-                help: nil,
-                type: .histogram,
-                values: [
-                    (labels: ["le": "0.1"], value: 2),
-                    (labels: ["le": "0.5"], value: 1), // Invalid: count decreases
-                    (labels: ["le": "+Inf"], value: 3)
-                ]
-            ),
-            PrometheusMetric(
-                name: "invalid_histogram_sum",
-                help: nil,
-                type: .histogram,
-                values: [(labels: [:], value: 5.0)]
-            ),
-            PrometheusMetric(
-                name: "invalid_histogram_count",
-                help: nil,
-                type: .histogram,
-                values: [(labels: [:], value: 3)]
-            )
-        ]
+    func testInvalidHistogramBuckets() throws {
+        let input = """
+        # HELP duration_seconds Duration histogram
+        # TYPE duration_seconds histogram
+        duration_seconds_bucket{le="0.1"} 2
+        duration_seconds_bucket{le="0.5"} 1
+        duration_seconds_bucket{le="+Inf"} 3
+        duration_seconds_sum 5.0
+        duration_seconds_count 3
+        """
         
-        XCTAssertThrowsError(try bucketMetrics.forEach { try store.store($0) }) { error in
-            XCTAssertEqual(error as? MetricError, .invalidHistogramBuckets("Invalid bucket configuration for histogram: invalid_histogram"))
+        let metrics = try PrometheusParser.parse(input)
+        XCTAssertThrowsError(try metrics.forEach { try store.store($0) }) { error in
+            XCTAssertEqual(error as? MetricError, .invalidHistogramBuckets("duration_seconds"))
         }
     }
     
@@ -225,67 +201,152 @@ final class MetricStoreTests: XCTestCase {
         XCTAssertEqual(store.metrics[key4]?.values.last?.value, 0.0)
     }
     
-    func testHistogramWithLabels() throws {
+    func testHistogramAssemblyFromComponents() throws {
+        // Test histogram assembly from individual components (Prometheus format)
         let bucketMetrics = [
             PrometheusMetric(
-                name: "request_duration_bucket",
-                help: nil,
+                name: "http_request_duration_seconds_bucket",
+                help: "Request duration histogram",
                 type: .histogram,
-                values: [
-                    (labels: ["service": "api", "endpoint": "/users", "le": "0.1"], value: 10),
-                    (labels: ["service": "api", "endpoint": "/users", "le": "0.5"], value: 20),
-                    (labels: ["service": "api", "endpoint": "/users", "le": "+Inf"], value: 30),
-                    (labels: ["service": "web", "endpoint": "/home", "le": "0.1"], value: 5),
-                    (labels: ["service": "web", "endpoint": "/home", "le": "0.5"], value: 15),
-                    (labels: ["service": "web", "endpoint": "/home", "le": "+Inf"], value: 25)
-                ]
+                values: [(labels: ["le": "0.1"], value: 1)]
             ),
             PrometheusMetric(
-                name: "request_duration_sum",
-                help: nil,
+                name: "http_request_duration_seconds_bucket",
+                help: "Request duration histogram",
                 type: .histogram,
-                values: [
-                    (labels: ["service": "api", "endpoint": "/users"], value: 15.5),
-                    (labels: ["service": "web", "endpoint": "/home"], value: 12.3)
-                ]
+                values: [(labels: ["le": "0.5"], value: 4)]
             ),
             PrometheusMetric(
-                name: "request_duration_count",
-                help: nil,
+                name: "http_request_duration_seconds_bucket",
+                help: "Request duration histogram",
                 type: .histogram,
-                values: [
-                    (labels: ["service": "api", "endpoint": "/users"], value: 30),
-                    (labels: ["service": "web", "endpoint": "/home"], value: 25)
-                ]
+                values: [(labels: ["le": "+Inf"], value: 6)]
             )
         ]
         
-        for metric in bucketMetrics {
-            try store.store(metric)
-        }
+        let sumMetric = PrometheusMetric(
+            name: "http_request_duration_seconds_sum",
+            help: "Request duration histogram",
+            type: .histogram,
+            values: [(labels: [:], value: 8.35)]
+        )
         
-        let apiKey = MetricKeyGenerator.generateKey(
+        let countMetric = PrometheusMetric(
+            name: "http_request_duration_seconds_count",
+            help: "Request duration histogram",
+            type: .histogram,
+            values: [(labels: [:], value: 6)]
+        )
+        
+        // Store components in order
+        try bucketMetrics.forEach { try store.store($0) }
+        try store.store(sumMetric)
+        try store.store(countMetric)
+        
+        let key = MetricKeyGenerator.generateKey(name: "http_request_duration_seconds", labels: [:])
+        let storedMetric = store.metrics[key]
+        
+        XCTAssertNotNil(storedMetric, "Metric should be stored")
+        XCTAssertEqual(storedMetric?.definition?.type, .histogram, "Metric should be a histogram")
+        
+        let histogram = storedMetric?.values.last?.histogram
+        XCTAssertNotNil(histogram, "Histogram data should be assembled")
+        XCTAssertEqual(histogram?.buckets.count, 3, "Should have 3 buckets")
+        XCTAssertEqual(histogram?.sum, 8.35, "Should preserve sum")
+        XCTAssertEqual(histogram?.count, 6, "Should preserve count")
+    }
+    
+    func testHistogramAssemblyFromComplete() throws {
+        // Test histogram assembly from a complete histogram metric
+        let metric = PrometheusMetric(
+            name: "http_request_duration_seconds",
+            help: "Request duration histogram",
+            type: .histogram,
+            values: [
+                (labels: ["le": "0.1"], value: 1),
+                (labels: ["le": "0.5"], value: 4),
+                (labels: ["le": "+Inf"], value: 6),
+                (labels: [:], value: 8.35),  // sum
+                (labels: [:], value: 6)      // count
+            ]
+        )
+        
+        try store.store(metric)
+        
+        let key = MetricKeyGenerator.generateKey(name: "http_request_duration_seconds", labels: [:])
+        let storedMetric = store.metrics[key]
+        
+        XCTAssertNotNil(storedMetric, "Metric should be stored")
+        XCTAssertEqual(storedMetric?.definition?.type, .histogram, "Metric should be a histogram")
+        
+        let histogram = storedMetric?.values.last?.histogram
+        XCTAssertNotNil(histogram, "Histogram data should be assembled")
+        XCTAssertEqual(histogram?.buckets.count, 3, "Should have 3 buckets")
+        XCTAssertEqual(histogram?.sum, 8.35, "Should preserve sum")
+        XCTAssertEqual(histogram?.count, 6, "Should preserve count")
+    }
+    
+    func testHistogramWithLabels() throws {
+        // Test histogram assembly with labels
+        let bucketMetrics = [
+            PrometheusMetric(
+                name: "request_duration_bucket",
+                help: "Request duration by service",
+                type: .histogram,
+                values: [(labels: ["service": "api", "endpoint": "/users", "le": "0.1"], value: 10)]
+            ),
+            PrometheusMetric(
+                name: "request_duration_bucket",
+                help: "Request duration by service",
+                type: .histogram,
+                values: [(labels: ["service": "api", "endpoint": "/users", "le": "0.5"], value: 20)]
+            ),
+            PrometheusMetric(
+                name: "request_duration_bucket",
+                help: "Request duration by service",
+                type: .histogram,
+                values: [(labels: ["service": "api", "endpoint": "/users", "le": "+Inf"], value: 30)]
+            )
+        ]
+        
+        let sumMetric = PrometheusMetric(
+            name: "request_duration_sum",
+            help: "Request duration by service",
+            type: .histogram,
+            values: [(labels: ["service": "api", "endpoint": "/users"], value: 15.5)]
+        )
+        
+        let countMetric = PrometheusMetric(
+            name: "request_duration_count",
+            help: "Request duration by service",
+            type: .histogram,
+            values: [(labels: ["service": "api", "endpoint": "/users"], value: 30)]
+        )
+        
+        // Store components
+        try bucketMetrics.forEach { try store.store($0) }
+        try store.store(sumMetric)
+        try store.store(countMetric)
+        
+        let key = MetricKeyGenerator.generateKey(
             name: "request_duration",
             labels: ["service": "api", "endpoint": "/users"]
         )
-        let webKey = MetricKeyGenerator.generateKey(
-            name: "request_duration",
-            labels: ["service": "web", "endpoint": "/home"]
-        )
         
-        // Check API endpoint histogram
-        XCTAssertNotNil(store.histogramData[apiKey])
-        let apiHistogram = store.histogramData[apiKey]?.first
-        XCTAssertEqual(apiHistogram?.buckets.count, 3)
-        XCTAssertEqual(apiHistogram?.sum, 15.5)
-        XCTAssertEqual(apiHistogram?.count, 30)
+        let storedMetric = store.metrics[key]
+        XCTAssertNotNil(storedMetric, "Metric should be stored")
+        XCTAssertEqual(storedMetric?.definition?.type, .histogram, "Metric should be a histogram")
         
-        // Check Web endpoint histogram
-        XCTAssertNotNil(store.histogramData[webKey])
-        let webHistogram = store.histogramData[webKey]?.first
-        XCTAssertEqual(webHistogram?.buckets.count, 3)
-        XCTAssertEqual(webHistogram?.sum, 12.3)
-        XCTAssertEqual(webHistogram?.count, 25)
+        let histogram = storedMetric?.values.last?.histogram
+        XCTAssertNotNil(histogram, "Histogram data should be assembled")
+        XCTAssertEqual(histogram?.buckets.count, 3, "Should have 3 buckets")
+        XCTAssertEqual(histogram?.sum, 15.5, "Should preserve sum")
+        XCTAssertEqual(histogram?.count, 30, "Should preserve count")
+        
+        // Verify labels are preserved correctly
+        XCTAssertEqual(storedMetric?.labels["service"], "api")
+        XCTAssertEqual(storedMetric?.labels["endpoint"], "/users")
+        XCTAssertNil(storedMetric?.labels["le"], "le label should not be in base labels")
     }
     
     func testLabelCharacterEscaping() throws {

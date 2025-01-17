@@ -5,7 +5,7 @@ import os
 class MetricsManager: ObservableObject {
     static let shared = MetricsManager()
     
-    @Published private var store = MetricStore()
+    @Published private(set) var store = MetricStore()
     @Published private(set) var lastError: String?
     
     private var timer: Timer?
@@ -22,11 +22,7 @@ class MetricsManager: ObservableObject {
     var metrics: [String: TimeSeriesData] {
         store.metrics
     }
-    
-    var histogramData: [String: [HistogramData]] {
-        store.histogramData
-    }
-    
+        
     func getRate(for metricKey: String, timeWindow: TimeInterval = 300) -> Double? {
         store.getRate(for: metricKey, timeWindow: timeWindow)
     }
