@@ -3,40 +3,23 @@ import Charts
 import os
 
 struct MetricsView: View {
-    @ObservedObject private var metricsManager = MetricsManager.shared
+    @StateObject private var viewModel = MetricsViewModel()
     @State private var selectedTimeRange: TimeRange = .hour
     private let logger = Logger(subsystem: "io.aparker.locol", category: "MetricsView")
-    
-    private var groupedMetrics: (regular: [(String, TimeSeriesData)], histograms: [(String, TimeSeriesData)]) {
-        let allMetrics = metricsManager.metrics.sorted { $0.key < $1.key }
-        
-        // Split metrics by type
-        let regular = allMetrics.filter { (key: String, value: TimeSeriesData) in
-            guard let type = value.definition?.type else { return false }
-            return type == .counter || type == .gauge
-        }
-        
-        let histograms = allMetrics.filter { (key: String, value: TimeSeriesData) in
-            guard let type = value.definition?.type else { return false }
-            return type == .histogram
-        }
-        
-        return (regular: regular, histograms: histograms)
-    }
     
     var body: some View {
         ScrollView {
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 500))], spacing: 16) {
                 // Regular metrics section
-                if !groupedMetrics.regular.isEmpty {
+                if !viewModel.groupedMetrics.regular.isEmpty {
                     Section {
-                        ForEach(groupedMetrics.regular, id: \.0) { key, metric in
-                            if let type = metric.definition?.type {
+                        ForEach(viewModel.groupedMetrics.regular, id: \.0) { key, metrics in
+                            if let type = metrics.first?.type {
                                 switch type {
                                 case .counter:
-                                    CounterCard(metric: metric)
+                                    CounterCard(metrics: metrics, viewModel: viewModel)
                                 case .gauge:
-                                    GaugeCard(metric: metric)
+                                    GaugeCard(metrics: metrics)
                                 case .histogram:
                                     EmptyView() // Should never happen
                                 }
@@ -51,11 +34,12 @@ struct MetricsView: View {
                 }
                 
                 // Histograms section
-                if !groupedMetrics.histograms.isEmpty {
+                if !viewModel.groupedMetrics.histograms.isEmpty {
                     Section {
-                        ForEach(groupedMetrics.histograms, id: \.0) { key, metric in
-                            if let histogram = metric.values.last?.histogram {
-                                HistogramCard(metric: histogram, name: key)
+                        ForEach(viewModel.groupedMetrics.histograms, id: \.0) { key, metrics in
+                            if let lastMetric = metrics.last,
+                               let histogram = lastMetric.histogram {
+                                HistogramCard(metric: lastMetric, histogram: histogram)
                             }
                         }
                     } header: {
@@ -72,7 +56,7 @@ struct MetricsView: View {
         .toolbar {
             ToolbarItem {
                 Button(action: {
-                    metricsManager.startScraping()
+                    viewModel.startScraping()
                 }) {
                     Image(systemName: "arrow.clockwise")
                 }
@@ -90,33 +74,30 @@ struct MetricsView: View {
     }
 }
 
-private func formatLabels(_ labels: [String: String]) -> String {
-    labels.map { "\($0.key)=\($0.value)" }.joined(separator: ", ")
-}
-
 struct CounterCard: View {
-    let metric: TimeSeriesData
-    @ObservedObject private var metricsManager = MetricsManager.shared
+    let metrics: [Metric]
+    let viewModel: MetricsViewModel
     
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             // Header
-            Text(metric.name)
+            Text(metrics.first?.name ?? "")
                 .font(.headline)
-            if !metric.labels.isEmpty {
-                Text(formatLabels(metric.labels))
+            if let labels = metrics.first?.labels,
+               !labels.isEmpty {
+                Text(labels.formattedLabels())
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             
             // Chart
-            TimeSeriesChartView(metric: metric)
+            TimeSeriesChartView(metrics: metrics)
                 .frame(height: 200)
             
             // Stats
             HStack(spacing: 16) {
                 // Total
-                if let lastValue = metric.values.last?.value {
+                if let lastValue = metrics.last?.value {
                     StatBox(
                         title: "Total",
                         value: String(format: "%.0f", lastValue)
@@ -124,9 +105,8 @@ struct CounterCard: View {
                 }
                 
                 // Rate
-                if let rate = metricsManager.getRate(
-                    for: MetricKeyGenerator.generateKey(name: metric.name, labels: metric.labels)
-                ) {
+                if let key = metrics.first?.id,
+                   let rate = viewModel.getRate(for: key) {
                     StatBox(
                         title: "Rate (/sec)",
                         value: String(format: "%.2f", rate)
@@ -141,25 +121,26 @@ struct CounterCard: View {
 }
 
 struct GaugeCard: View {
-    let metric: TimeSeriesData
+    let metrics: [Metric]
     
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             // Header
-            Text(metric.name)
+            Text(metrics.first?.name ?? "")
                 .font(.headline)
-            if !metric.labels.isEmpty {
-                Text(formatLabels(metric.labels))
+            if let labels = metrics.first?.labels,
+               !labels.isEmpty {
+                Text(labels.formattedLabels())
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             
             // Chart
-            TimeSeriesChartView(metric: metric)
+            TimeSeriesChartView(metrics: metrics)
                 .frame(height: 200)
             
             // Current value
-            if let lastValue = metric.values.last?.value {
+            if let lastValue = metrics.last?.value {
                 StatBox(
                     title: "Current Value",
                     value: String(format: "%.2f", lastValue)
@@ -173,22 +154,33 @@ struct GaugeCard: View {
 }
 
 struct HistogramCard: View {
-    let metric: HistogramMetric
-    let name: String
+    let metric: Metric
+    let histogram: HistogramMetric
     
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             // Header
-            Text(name)
+            Text(metric.name)
                 .font(.headline)
             if !metric.labels.isEmpty {
-                Text(formatLabels(metric.labels))
+                Text(metric.labels.formattedLabels())
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
             
+            // Stats
+            HStack(spacing: 16) {
+                StatBox(title: "Count", value: String(format: "%.0f", histogram.count))
+                StatBox(title: "Sum", value: String(format: "%.2f", histogram.sum))
+                StatBox(title: "Average", value: String(format: "%.2f", histogram.average))
+                StatBox(title: "p50", value: String(format: "%.2f", histogram.p50))
+                StatBox(title: "p95", value: String(format: "%.2f", histogram.p95))
+                StatBox(title: "p99", value: String(format: "%.2f", histogram.p99))
+            }
+            
             // Histogram chart
-            HistogramChartView(histogram: metric)
+            HistogramChartView(histogram: histogram)
+                .frame(height: 200)
         }
         .padding()
         .background(Color(nsColor: .windowBackgroundColor))
@@ -197,15 +189,14 @@ struct HistogramCard: View {
 }
 
 struct TimeSeriesChartView: View {
-    let metric: TimeSeriesData
+    let metrics: [Metric]
     
     var body: some View {
         Chart {
-            ForEach(metric.values.indices, id: \.self) { index in
-                let point = metric.values[index]
+            ForEach(metrics) { metric in
                 LineMark(
-                    x: .value("Time", point.timestamp),
-                    y: .value("Value", point.value)
+                    x: .value("Time", metric.timestamp),
+                    y: .value("Value", metric.value)
                 )
             }
         }

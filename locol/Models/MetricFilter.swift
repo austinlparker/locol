@@ -39,8 +39,7 @@ class MetricFilter {
         return nil
     }
     
-    static func isHistogram(_ metric: TimeSeriesData) -> Bool {
-        guard let type = metric.definition?.type else { return false }
-        return type == .histogram
+    static func isHistogram(_ metric: Metric) -> Bool {
+        metric.type == .histogram
     }
 } 

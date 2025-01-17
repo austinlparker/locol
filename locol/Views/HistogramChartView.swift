@@ -37,18 +37,10 @@ struct HistogramChartView: View {
             HStack(spacing: 16) {
                 StatBox(title: "Count", value: String(format: "%.0f", histogram.count))
                 StatBox(title: "Sum", value: String(format: "%.2f", histogram.sum))
-                if let avg = histogram.average {
-                    StatBox(title: "Average", value: String(format: "%.2f", avg))
-                }
-                if let p50 = histogram.p50 {
-                    StatBox(title: "Median", value: String(format: "%.2f", p50))
-                }
-                if let p95 = histogram.p95 {
-                    StatBox(title: "p95", value: String(format: "%.2f", p95))
-                }
-                if let p99 = histogram.p99 {
-                    StatBox(title: "p99", value: String(format: "%.2f", p99))
-                }
+                StatBox(title: "Average", value: String(format: "%.2f", histogram.average))
+                StatBox(title: "p50", value: String(format: "%.2f", histogram.p50))
+                StatBox(title: "p95", value: String(format: "%.2f", histogram.p95))
+                StatBox(title: "p99", value: String(format: "%.2f", histogram.p99))
             }
             
             // Chart
@@ -78,29 +70,23 @@ struct HistogramChartView: View {
                 }
                 
                 // Percentile markers
-                if let p50 = histogram.p50 {
-                    RuleMark(
-                        x: .value("Median", formatBucketLabel(p50))
-                    )
-                    .foregroundStyle(.green)
-                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [5, 5]))
-                }
+                RuleMark(
+                    x: .value("Median", formatBucketLabel(histogram.p50))
+                )
+                .foregroundStyle(.green)
+                .lineStyle(StrokeStyle(lineWidth: 1, dash: [5, 5]))
                 
-                if let p95 = histogram.p95 {
-                    RuleMark(
-                        x: .value("p95", formatBucketLabel(p95))
-                    )
-                    .foregroundStyle(.orange)
-                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [5, 5]))
-                }
+                RuleMark(
+                    x: .value("p95", formatBucketLabel(histogram.p95))
+                )
+                .foregroundStyle(.orange)
+                .lineStyle(StrokeStyle(lineWidth: 1, dash: [5, 5]))
                 
-                if let p99 = histogram.p99 {
-                    RuleMark(
-                        x: .value("p99", formatBucketLabel(p99))
-                    )
-                    .foregroundStyle(.red)
-                    .lineStyle(StrokeStyle(lineWidth: 1, dash: [5, 5]))
-                }
+                RuleMark(
+                    x: .value("p99", formatBucketLabel(histogram.p99))
+                )
+                .foregroundStyle(.red)
+                .lineStyle(StrokeStyle(lineWidth: 1, dash: [5, 5]))
             }
             .chartYAxis {
                 AxisMarks(position: .leading)
@@ -116,23 +102,28 @@ struct HistogramChartView: View {
                 }
             }
             .frame(height: 200)
-            .chartOverlay { proxy in
-                GeometryReader { geometry in
-                    Rectangle().fill(.clear).contentShape(Rectangle())
-                        .gesture(
-                            DragGesture()
-                                .onChanged { value in
-                                    let x = value.location.x - geometry[proxy.plotAreaFrame].origin.x
-                                    guard let bucket = findBucket(at: x, proxy: proxy, geometry: geometry) else {
-                                        selectedBucket = nil
-                                        return
-                                    }
-                                    selectedBucket = bucket
-                                }
-                                .onEnded { _ in
+            .chartBackground { proxy in
+                ZStack(alignment: .topLeading) {
+                    GeometryReader { geometry in
+                        Rectangle()
+                            .fill(.clear)
+                            .contentShape(Rectangle())
+                            .onHover { hovering in
+                                if !hovering {
                                     selectedBucket = nil
                                 }
-                        )
+                            }
+                            .onContinuousHover { phase in
+                                switch phase {
+                                case .active(let location):
+                                    guard let plotFrame = proxy.plotFrame else { return }
+                                    let x = location.x - geometry[plotFrame].origin.x
+                                    selectedBucket = findBucket(at: x, proxy: proxy, geometry: geometry)
+                                case .ended:
+                                    selectedBucket = nil
+                                }
+                            }
+                    }
                 }
             }
             
@@ -151,8 +142,9 @@ struct HistogramChartView: View {
     }
     
     private func findBucket(at x: CGFloat, proxy: ChartProxy, geometry: GeometryProxy) -> (upperBound: Double, count: Double)? {
-        let relativeX = x / geometry[proxy.plotAreaFrame].width
-        let bucketWidth = geometry[proxy.plotAreaFrame].width / CGFloat(nonInfBuckets.count)
+        guard let plotFrame = proxy.plotFrame else { return nil }
+        let relativeX = x / geometry[plotFrame].width
+        let bucketWidth = geometry[plotFrame].width / CGFloat(nonInfBuckets.count)
         let index = Int(relativeX * CGFloat(nonInfBuckets.count))
         
         guard index >= 0 && index < nonInfBuckets.count else {
@@ -160,22 +152,6 @@ struct HistogramChartView: View {
         }
         
         return nonInfBuckets[index]
-    }
-}
-
-struct StatBox: View {
-    let title: String
-    let value: String
-    
-    var body: some View {
-        VStack(alignment: .leading) {
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.callout)
-                .fontWeight(.medium)
-        }
     }
 }
 
@@ -189,11 +165,11 @@ struct StatBox: View {
     ]
     
     HistogramChartView(histogram: HistogramMetric(
-        timestamp: Date(),
-        labels: [:],
         buckets: previewBuckets,
         sum: 75.0,
-        count: 100.0
+        count: 100.0,
+        timestamp: Date(),
+        labels: [:]
     ))
     .padding()
 } 

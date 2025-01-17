@@ -42,30 +42,28 @@ final class MetricFilterTests: XCTestCase {
         XCTAssertNil(MetricFilter.getHistogramComponent("bucket_value"))
     }
     
-    func testIsHistogramTimeSeriesData() {
-        let histogramMetric = TimeSeriesData(
+    func testIsHistogramMetric() {
+        let histogramMetric = Metric(
             name: "request_duration",
+            type: .histogram,
+            help: "",
             labels: [:],
-            values: [],
-            definition: MetricDefinition(name: "request_duration", description: "", type: .histogram)
+            timestamp: Date(),
+            value: 0,
+            histogram: nil
         )
         
-        let counterMetric = TimeSeriesData(
+        let counterMetric = Metric(
             name: "requests_total",
+            type: .counter,
+            help: "",
             labels: [:],
-            values: [],
-            definition: MetricDefinition(name: "requests_total", description: "", type: .counter)
-        )
-        
-        let undefinedMetric = TimeSeriesData(
-            name: "undefined_metric",
-            labels: [:],
-            values: [],
-            definition: nil
+            timestamp: Date(),
+            value: 0,
+            histogram: nil
         )
         
         XCTAssertTrue(MetricFilter.isHistogram(histogramMetric))
         XCTAssertFalse(MetricFilter.isHistogram(counterMetric))
-        XCTAssertFalse(MetricFilter.isHistogram(undefinedMetric))
     }
 } 

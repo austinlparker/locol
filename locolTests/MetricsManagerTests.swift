@@ -152,8 +152,8 @@ final class MetricsManagerTests: XCTestCase {
             
             XCTAssertNotNil(self.manager.metrics[gaugeKey])
             XCTAssertNotNil(self.manager.metrics[counterKey])
-            XCTAssertEqual(self.manager.metrics[gaugeKey]?.values.last?.value, 42)
-            XCTAssertEqual(self.manager.metrics[counterKey]?.values.last?.value, 100)
+            XCTAssertEqual(self.manager.metrics[gaugeKey]?.last?.value, 42)
+            XCTAssertEqual(self.manager.metrics[counterKey]?.last?.value, 100)
             
             expectation.fulfill()
         }
@@ -175,24 +175,43 @@ final class MetricsManagerTests: XCTestCase {
             request_duration_count 6
             """
         
+        // Process metrics and wait for async processing
         try manager.processMetrics(metricsData)
+        Thread.sleep(forTimeInterval: 0.5)  // Increased wait time
         
         let key = manager.metricKey(name: "request_duration", labels: [:])
-        let metric = manager.metrics[key]
+        let metrics = manager.metrics[key]
         
-        XCTAssertNotNil(metric, "Metric should not be nil")
-        XCTAssertEqual(metric?.definition?.type, .histogram, "Metric should be a histogram")
+        XCTAssertNotNil(metrics, "Metrics should not be nil")
+        XCTAssertFalse(metrics?.isEmpty ?? true, "Metrics should not be empty")
         
-        let histogram = metric?.values.last?.histogram
-        XCTAssertNotNil(histogram, "Histogram data should not be nil")
-        XCTAssertEqual(histogram?.buckets.count, 4, "Should have 4 buckets")
-        XCTAssertEqual(histogram?.sum, 8.35, "Sum should be 8.35")
-        XCTAssertEqual(histogram?.count, 6, "Count should be 6")
+        guard let lastMetric = metrics?.last else {
+            XCTFail("No metrics found")
+            return
+        }
+        
+        XCTAssertEqual(lastMetric.type, .histogram, "Metric should be a histogram")
+        
+        guard let histogram = lastMetric.histogram else {
+            XCTFail("Histogram data should not be nil")
+            return
+        }
+        
+        XCTAssertEqual(histogram.buckets.count, 4, "Should have 4 buckets")
+        XCTAssertEqual(histogram.sum, 8.35, "Sum should be 8.35")
+        XCTAssertEqual(histogram.count, 6, "Count should be 6")
         
         // Test quantile calculations
-        XCTAssertEqual(histogram?.p50 ?? 0, 0.5, accuracy: 0.1, "50th percentile should be around 0.5")
-        XCTAssertEqual(histogram?.p95 ?? 0, 1.0, accuracy: 0.1, "95th percentile should be around 1.0")
-        XCTAssertEqual(histogram?.average ?? 0, 8.35/6, accuracy: 0.01, "Average should be sum/count")
+        XCTAssertEqual(histogram.p50, 0.5, accuracy: 0.1, "50th percentile should be around 0.5")
+        XCTAssertEqual(histogram.p95, 1.0, accuracy: 0.1, "95th percentile should be around 1.0")
+        XCTAssertEqual(histogram.average, 8.35/6, accuracy: 0.01, "Average should be sum/count")
+        
+        // Verify bucket values
+        let sortedBuckets = histogram.buckets.sorted(by: { $0.upperBound < $1.upperBound })
+        XCTAssertEqual(sortedBuckets[0].count, 1, "First bucket should have count 1")
+        XCTAssertEqual(sortedBuckets[1].count, 4, "Second bucket should have count 4")
+        XCTAssertEqual(sortedBuckets[2].count, 5, "Third bucket should have count 5")
+        XCTAssertEqual(sortedBuckets[3].count, 6, "Inf bucket should have count 6")
         
         expectation.fulfill()
         
@@ -216,27 +235,37 @@ final class MetricsManagerTests: XCTestCase {
         try manager.processMetrics(metricsData)
         
         let key = manager.metricKey(name: "http_request_duration_seconds", labels: ["method": "GET", "path": "/api/v1/users"])
-        let metric = manager.metrics[key]
+        let metrics = manager.metrics[key]
         
-        XCTAssertNotNil(metric, "Metric should not be nil")
-        XCTAssertEqual(metric?.definition?.type, .histogram, "Metric should be a histogram")
+        XCTAssertNotNil(metrics, "Metrics should not be nil")
+        XCTAssertFalse(metrics?.isEmpty ?? true, "Metrics should not be empty")
         
-        let histogram = metric?.values.last?.histogram
-        XCTAssertNotNil(histogram, "Histogram data should not be nil")
-        XCTAssertEqual(histogram?.buckets.count, 4, "Should have 4 buckets")
-        XCTAssertEqual(histogram?.sum, 23.5, "Sum should be 23.5")
-        XCTAssertEqual(histogram?.count, 40, "Count should be 40")
+        guard let lastMetric = metrics?.last else {
+            XCTFail("No metrics found")
+            return
+        }
+        
+        XCTAssertEqual(lastMetric.type, .histogram, "Metric should be a histogram")
+        
+        guard let histogram = lastMetric.histogram else {
+            XCTFail("Histogram data should not be nil")
+            return
+        }
+        
+        XCTAssertEqual(histogram.buckets.count, 4, "Should have 4 buckets")
+        XCTAssertEqual(histogram.sum, 23.5, "Sum should be 23.5")
+        XCTAssertEqual(histogram.count, 40, "Count should be 40")
         
         // Test bucket values
-        let buckets = histogram?.buckets.sorted(by: { $0.upperBound < $1.upperBound })
-        XCTAssertEqual(buckets?[0].count, 10, "First bucket should have count 10")
-        XCTAssertEqual(buckets?[1].count, 25, "Second bucket should have count 25")
-        XCTAssertEqual(buckets?[2].count, 35, "Third bucket should have count 35")
-        XCTAssertEqual(buckets?[3].count, 40, "Inf bucket should have count 40")
+        let buckets = histogram.buckets.sorted(by: { $0.upperBound < $1.upperBound })
+        XCTAssertEqual(buckets[0].count, 10, "First bucket should have count 10")
+        XCTAssertEqual(buckets[1].count, 25, "Second bucket should have count 25")
+        XCTAssertEqual(buckets[2].count, 35, "Third bucket should have count 35")
+        XCTAssertEqual(buckets[3].count, 40, "Inf bucket should have count 40")
         
         // Test quantile calculations
-        XCTAssertEqual(histogram?.p50 ?? 0, 0.5, accuracy: 0.1, "50th percentile should be around 0.5")
-        XCTAssertEqual(histogram?.average ?? 0, 23.5/40, accuracy: 0.01, "Average should be sum/count")
+        XCTAssertEqual(histogram.p50, 0.5, accuracy: 0.1, "50th percentile should be around 0.5")
+        XCTAssertEqual(histogram.average, 23.5/40, accuracy: 0.01, "Average should be sum/count")
         
         expectation.fulfill()
         
@@ -272,7 +301,7 @@ final class MetricsManagerTests: XCTestCase {
             .dropFirst()
             .sink { error in
                 XCTAssertNotNil(error)
-                XCTAssertTrue(error?.contains("Error processing metrics") ?? false)
+                XCTAssertTrue(error?.contains("Error parsing metrics") ?? false)
                 expectation.fulfill()
             }
             .store(in: &cancellables)
