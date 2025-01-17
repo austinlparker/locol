@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 enum MetricType: String {
     case counter
@@ -29,6 +30,8 @@ struct Metric: Identifiable {
 }
 
 struct HistogramMetric {
+    private static let logger = Logger(subsystem: "io.aparker.locol", category: "HistogramMetric")
+    
     struct Bucket: Comparable {
         let upperBound: Double
         let count: Double
@@ -97,6 +100,7 @@ struct HistogramMetric {
     static func from(samples: [(labels: [String: String], value: Double)], timestamp: Date) -> HistogramMetric? {
         // Extract base labels (excluding 'le')
         let baseLabels = samples.first?.labels.filter { $0.key != "le" } ?? [:]
+        logger.debug("Base labels: \(baseLabels.map { "\($0.key)=\($0.value)" }.joined(separator: ", "))")
         
         // Collect buckets
         var buckets: [Bucket] = []
@@ -107,15 +111,20 @@ struct HistogramMetric {
             if let le = labels["le"] {
                 let upperBound = le == "+Inf" ? Double.infinity : Double(le) ?? Double.infinity
                 buckets.append(Bucket(upperBound: upperBound, count: value))
+                logger.debug("Added bucket: le=\(le), count=\(value)")
             } else if labels.isEmpty || labels == baseLabels {
                 // This must be either sum or count
                 // We'll determine which by checking if we already have a value
                 // The first one we see is sum, the second is count
                 if sum == nil {
                     sum = value
+                    logger.debug("Found sum: \(value)")
                 } else {
                     count = value
+                    logger.debug("Found count: \(value)")
                 }
+            } else {
+                logger.debug("Skipping sample with labels: \(labels.map { "\($0.key)=\($0.value)" }.joined(separator: ", "))")
             }
         }
         
@@ -123,6 +132,7 @@ struct HistogramMetric {
         guard let sum = sum,
               let count = count,
               !buckets.isEmpty else {
+            logger.error("Missing required components: sum=\(String(describing: sum)), count=\(String(describing: count)), buckets=\(buckets.count)")
             return nil
         }
         
@@ -130,10 +140,14 @@ struct HistogramMetric {
         let sortedBuckets = buckets.sorted()
         var prevCount = 0.0
         for bucket in sortedBuckets {
-            guard bucket.count >= prevCount else { return nil }
+            guard bucket.count >= prevCount else {
+                logger.error("Non-monotonic bucket detected: previous count \(prevCount), current count \(bucket.count)")
+                return nil
+            }
             prevCount = bucket.count
         }
         
+        logger.debug("Successfully created histogram with \(buckets.count) buckets")
         return HistogramMetric(
             buckets: sortedBuckets,
             sum: sum,

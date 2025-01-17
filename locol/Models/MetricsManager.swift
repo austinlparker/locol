@@ -127,17 +127,19 @@ class MetricsManager: ObservableObject {
         logger.debug("Parsing metrics string of length: \(metricsString.count)")
         do {
             let metricGroups = try PrometheusParser.parse(metricsString)
+            logger.debug("Successfully parsed \(metricGroups.count) metric groups")
             let timestamp = Date()
             for metric in metricGroups {
                 do {
                     if metric.type == .histogram {
+                        logger.debug("Processing histogram metric: \(metric.name)")
                         try processHistogramComponent(metric, timestamp: timestamp)
                     } else {
                         try processMetric(metric, timestamp: timestamp)
                     }
                 } catch let error as MetricError {
                     // Log the specific error but continue processing other metrics
-                    logger.error("Error storing metric \(metric.name): \(error.localizedDescription)")
+                    logger.error("Error storing metric \(metric.name): \(error)")
                     handleError("Error storing metric \(metric.name): \(error.localizedDescription)")
                 } catch {
                     logger.error("Unexpected error storing metric \(metric.name): \(error.localizedDescription)")
@@ -150,7 +152,7 @@ class MetricsManager: ObservableObject {
             // Clean up old values
             cleanupOldValues()
         } catch {
-            logger.error("Error parsing metrics: \(error.localizedDescription)")
+            logger.error("Error parsing metrics: \(String(describing: error))")
             handleError("Error parsing metrics: \(error.localizedDescription)")
         }
     }
@@ -192,6 +194,8 @@ class MetricsManager: ObservableObject {
             let baseLabels = labels.filter { $0.key != "le" }
             let key = metricKey(name: baseName, labels: baseLabels)
             logger.debug("Processing value \(value) for key \(key)")
+            logger.debug("Original labels: \(labels)")
+            logger.debug("Base labels after filtering: \(baseLabels)")
             
             // Initialize if needed
             if histogramComponents[key] == nil {
@@ -214,13 +218,13 @@ class MetricsManager: ObservableObject {
             if let le = labels["le"] {
                 // This is a bucket
                 let leValue = le == "+Inf" ? Double.infinity : Double(le) ?? Double.infinity
-                logger.debug("Adding bucket le=\(le) count=\(value) to \(key)")
+                logger.debug("Adding bucket le=\(le) count=\(value) to \(key), current labels: \(self.histogramComponents[key]?.labels ?? [:])")
                 // Remove any existing bucket with the same le value
-                histogramComponents[key]?.buckets.removeAll { $0.le == leValue }
+                self.histogramComponents[key]?.buckets.removeAll { $0.le == leValue }
                 // Add the new bucket
-                histogramComponents[key]?.buckets.append((le: leValue, count: value))
+                self.histogramComponents[key]?.buckets.append((le: leValue, count: value))
                 // Sort buckets by le value
-                histogramComponents[key]?.buckets.sort { $0.le < $1.le }
+                self.histogramComponents[key]?.buckets.sort { $0.le < $1.le }
             } else if originalName.hasSuffix("_sum") {
                 logger.debug("Setting sum=\(value) for \(key)")
                 histogramComponents[key]?.sum = value
@@ -251,19 +255,23 @@ class MetricsManager: ObservableObject {
         }
         
         logger.debug("Finalizing histogram for \(key) with \(components.buckets.count) buckets")
+        logger.debug("Component labels: \(components.labels)")
         
         // Ensure buckets are properly sorted
         let sortedBuckets = components.buckets.sorted { $0.le < $1.le }
         
         // Create samples for histogram factory
         let samples = sortedBuckets.map { bucket in
-            (labels: components.labels.merging(["le": bucket.le == Double.infinity ? "+Inf" : String(bucket.le)]) { (_, new) in new }, value: bucket.count)
+            let labels = components.labels.merging(["le": bucket.le == Double.infinity ? "+Inf" : String(bucket.le)]) { (_, new) in new }
+            logger.debug("Created bucket sample with labels: \(labels), count: \(bucket.count)")
+            return (labels: labels, value: bucket.count)
         } + [
             (labels: components.labels, value: sum),
             (labels: components.labels, value: count)
         ]
         
         logger.debug("Created \(samples.count) samples for histogram factory")
+        logger.debug("Sample labels: \(samples.map { $0.labels })")
         
         if let histogram = HistogramMetric.from(samples: samples, timestamp: components.timestamp) {
             logger.debug("Successfully created histogram metric")
@@ -285,6 +293,8 @@ class MetricsManager: ObservableObject {
             logger.debug("Added histogram metric to metrics store")
         } else {
             logger.error("Failed to create histogram from samples")
+            logger.error("Sample details: \(samples.map { "labels: \($0.labels), value: \($0.value)" }.joined(separator: "\n"))")
+            throw MetricError.invalidHistogramBuckets(key)
         }
     }
     

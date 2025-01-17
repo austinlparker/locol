@@ -181,6 +181,7 @@ class PrometheusParser {
         
         // Skip validation if no buckets
         if buckets.isEmpty {
+            logger.debug("No buckets found for histogram \(metricName)")
             return
         }
         
@@ -188,7 +189,7 @@ class PrometheusParser {
         buckets.sort { $0.le < $1.le }
         
         // Debug logging
-        logger.debug("Validating histogram buckets:")
+        logger.debug("Validating histogram buckets for \(metricName):")
         for bucket in buckets {
             logger.debug("  le: \(bucket.le), count: \(bucket.count)")
         }
@@ -197,7 +198,7 @@ class PrometheusParser {
         var lastCount = buckets[0].count
         for bucket in buckets.dropFirst() {
             if bucket.count < lastCount {
-                logger.error("Non-monotonic bucket detected: previous count \(lastCount), current count \(bucket.count)")
+                logger.error("Non-monotonic bucket detected in \(metricName): previous count \(lastCount), current count \(bucket.count)")
                 throw MetricError.invalidHistogramBuckets(metricName)
             }
             lastCount = bucket.count
@@ -205,9 +206,11 @@ class PrometheusParser {
         
         // Ensure +Inf bucket exists
         guard buckets.last?.le == Double.infinity else {
-            logger.error("Missing +Inf bucket")
+            logger.error("Missing +Inf bucket in \(metricName). Last bucket: le=\(buckets.last?.le ?? -1), count=\(buckets.last?.count ?? -1)")
             throw MetricError.invalidHistogramBuckets(metricName)
         }
+        
+        logger.debug("Successfully validated histogram buckets for \(metricName)")
     }
     
     private static func parseHistogramBucket(_ le: String) -> Double? {
@@ -260,7 +263,8 @@ class PrometheusParser {
                     if value.hasPrefix("\"") && value.hasSuffix("\"") {
                         value = String(value.dropFirst().dropLast())
                     }
-                    if value.isEmpty {
+                    // Empty values are valid in Prometheus format
+                    if key.isEmpty {
                         throw MetricError.malformedMetricLine(originalLine)
                     }
                     labels[key] = value
