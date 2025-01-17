@@ -127,9 +127,14 @@ class MetricsManager: ObservableObject {
         logger.debug("Parsing metrics string of length: \(metricsString.count)")
         do {
             let metricGroups = try PrometheusParser.parse(metricsString)
+            let timestamp = Date()
             for metric in metricGroups {
                 do {
-                    try processMetric(metric)
+                    if metric.type == .histogram {
+                        try processHistogramComponent(metric, timestamp: timestamp)
+                    } else {
+                        try processMetric(metric, timestamp: timestamp)
+                    }
                 } catch let error as MetricError {
                     // Log the specific error but continue processing other metrics
                     logger.error("Error storing metric \(metric.name): \(error.localizedDescription)")
@@ -150,9 +155,8 @@ class MetricsManager: ObservableObject {
         }
     }
     
-    private func processMetric(_ metric: PrometheusMetric) throws {
+    private func processMetric(_ metric: PrometheusMetric, timestamp: Date) throws {
         let baseName = MetricFilter.getBaseName(metric.name)
-        let timestamp = Date()
         
         // Handle histogram components
         if MetricFilter.isHistogramComponent(metric.name) {
@@ -182,13 +186,16 @@ class MetricsManager: ObservableObject {
     
     private func processHistogramComponent(_ metric: PrometheusMetric, timestamp: Date) throws {
         let baseName = MetricFilter.getBaseName(metric.name)
+        logger.debug("Processing histogram component for \(baseName)")
         
         for (labels, value) in metric.values {
             let baseLabels = labels.filter { $0.key != "le" }
             let key = metricKey(name: baseName, labels: baseLabels)
+            logger.debug("Processing value \(value) for key \(key)")
             
             // Initialize if needed
             if histogramComponents[key] == nil {
+                logger.debug("Initializing new histogram components for \(key)")
                 histogramComponents[key] = (
                     buckets: [],
                     sum: nil,
@@ -199,44 +206,67 @@ class MetricsManager: ObservableObject {
                 )
             }
             
+            // Get the original metric name from the labels
+            let originalName = labels["__name__"] ?? metric.name
+            logger.debug("Processing component with original name: \(originalName)")
+            
             // Update component based on metric name suffix
-            switch true {
-            case metric.name.hasSuffix("_bucket"):
-                if let le = labels["le"]?.replacingOccurrences(of: "+Inf", with: "inf"),
-                   let leValue = le == "inf" ? Double.infinity : Double(le) {
-                    histogramComponents[key]?.buckets.append((le: leValue, count: value))
-                }
-            case metric.name.hasSuffix("_sum"):
+            if let le = labels["le"] {
+                // This is a bucket
+                let leValue = le == "+Inf" ? Double.infinity : Double(le) ?? Double.infinity
+                logger.debug("Adding bucket le=\(le) count=\(value) to \(key)")
+                // Remove any existing bucket with the same le value
+                histogramComponents[key]?.buckets.removeAll { $0.le == leValue }
+                // Add the new bucket
+                histogramComponents[key]?.buckets.append((le: leValue, count: value))
+                // Sort buckets by le value
+                histogramComponents[key]?.buckets.sort { $0.le < $1.le }
+            } else if originalName.hasSuffix("_sum") {
+                logger.debug("Setting sum=\(value) for \(key)")
                 histogramComponents[key]?.sum = value
-            case metric.name.hasSuffix("_count"):
+            } else if originalName.hasSuffix("_count") {
+                logger.debug("Setting count=\(value) for \(key)")
                 histogramComponents[key]?.count = value
-            default:
-                break
+            } else {
+                logger.debug("Unhandled metric suffix for \(originalName)")
             }
             
+            // Try to finalize after each component update
             try finalizeHistogramIfComplete(key: key)
         }
     }
     
     private func finalizeHistogramIfComplete(key: String) throws {
-        guard let components = histogramComponents[key] else { return }
+        guard let components = histogramComponents[key] else {
+            logger.debug("No components found for \(key)")
+            return
+        }
         
         // Only proceed if we have all components
         guard let sum = components.sum,
               let count = components.count,
               !components.buckets.isEmpty else {
+            logger.debug("Incomplete histogram for \(key): sum=\(String(describing: components.sum)), count=\(String(describing: components.count)), buckets=\(components.buckets.count)")
             return
         }
         
+        logger.debug("Finalizing histogram for \(key) with \(components.buckets.count) buckets")
+        
+        // Ensure buckets are properly sorted
+        let sortedBuckets = components.buckets.sorted { $0.le < $1.le }
+        
         // Create samples for histogram factory
-        let samples = components.buckets.map { bucket in
+        let samples = sortedBuckets.map { bucket in
             (labels: components.labels.merging(["le": bucket.le == Double.infinity ? "+Inf" : String(bucket.le)]) { (_, new) in new }, value: bucket.count)
         } + [
             (labels: components.labels, value: sum),
             (labels: components.labels, value: count)
         ]
         
+        logger.debug("Created \(samples.count) samples for histogram factory")
+        
         if let histogram = HistogramMetric.from(samples: samples, timestamp: components.timestamp) {
+            logger.debug("Successfully created histogram metric")
             let metric = Metric(
                 name: MetricFilter.getBaseName(key),
                 type: .histogram,
@@ -252,6 +282,9 @@ class MetricsManager: ObservableObject {
             }
             metrics[key]?.append(metric)
             histogramComponents.removeValue(forKey: key)
+            logger.debug("Added histogram metric to metrics store")
+        } else {
+            logger.error("Failed to create histogram from samples")
         }
     }
     

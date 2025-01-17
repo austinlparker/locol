@@ -67,7 +67,21 @@ struct HistogramMetric {
                 let countDelta = bucket.count - prevCount
                 if countDelta > 0 {
                     let fraction = (target - prevCount) / countDelta
-                    return prevBound + fraction * (bucket.upperBound - prevBound)
+                    
+                    // If this is the first bucket, use exponential interpolation from 0
+                    if prevCount == 0 {
+                        // Assume exponential distribution within the first bucket
+                        return bucket.upperBound * (-log(1 - fraction))
+                    }
+                    
+                    // If this is the infinity bucket, use the previous bound
+                    if bucket.upperBound.isInfinite {
+                        return prevBound
+                    }
+                    
+                    // Use exponential interpolation between bucket boundaries
+                    let scale = (bucket.upperBound - prevBound)
+                    return prevBound + scale * (-log(1 - fraction))
                 }
                 return bucket.upperBound
             }
@@ -75,7 +89,8 @@ struct HistogramMetric {
             prevBound = bucket.upperBound
         }
         
-        return buckets.last?.upperBound ?? 0
+        // If we get here, return the highest finite bucket's upper bound
+        return buckets.sorted().dropLast().last?.upperBound ?? 0
     }
     
     /// Create a histogram from a set of samples that include buckets, sum, and count
@@ -92,11 +107,11 @@ struct HistogramMetric {
             if let le = labels["le"] {
                 let upperBound = le == "+Inf" ? Double.infinity : Double(le) ?? Double.infinity
                 buckets.append(Bucket(upperBound: upperBound, count: value))
-            } else if labels == baseLabels {
-                // This is either sum or count - determine by looking at other samples
-                if samples.contains(where: { $0.labels == labels && $0.value != value }) {
-                    // If there's another sample with same labels but different value,
-                    // this must be the sum (since count should match bucket count)
+            } else if labels.isEmpty || labels == baseLabels {
+                // This must be either sum or count
+                // We'll determine which by checking if we already have a value
+                // The first one we see is sum, the second is count
+                if sum == nil {
                     sum = value
                 } else {
                     count = value
