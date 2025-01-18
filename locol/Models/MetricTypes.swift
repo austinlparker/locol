@@ -37,6 +37,10 @@ struct HistogramMetric {
         let upperBound: Double
         let count: Double
         
+        var bucketValue: Double = 0
+        var lowerBound: Double = 0
+        var percentage: Double = 0
+        
         static func < (lhs: Bucket, rhs: Bucket) -> Bool {
             if lhs.upperBound == .infinity { return false }
             if rhs.upperBound == .infinity { return true }
@@ -56,10 +60,30 @@ struct HistogramMetric {
     var p95: Double { quantile(0.95) }
     var p99: Double { quantile(0.99) }
     
-    /// Returns the non-infinite buckets sorted by upper bound, with their individual (non-cumulative) counts
     var nonInfiniteBuckets: [Bucket] {
-        buckets.filter { !$0.upperBound.isInfinite }
-            .sorted()
+        buckets.enumerated().compactMap { index, bucket in
+            guard !bucket.upperBound.isInfinite else { return nil }
+            
+            let lowerBound = index > 0 ? buckets[index - 1].upperBound : 0
+            let bucketValue = index > 0 ? bucket.count - buckets[index - 1].count : bucket.count
+            let percentage = (bucketValue / Double(count)) * 100
+            
+            return Bucket(
+                id: bucket.id,
+                upperBound: bucket.upperBound,
+                count: bucket.count,
+                bucketValue: bucketValue,
+                lowerBound: lowerBound,
+                percentage: percentage
+            )
+        }
+    }
+    
+    var xAxisDomain: ClosedRange<Double> {
+        guard let max = nonInfiniteBuckets.map(\.upperBound).max() else {
+            return 0...1 // Fallback range if no buckets
+        }
+        return 0...max
     }
     
     /// Get the lower bound for a bucket at a given index
@@ -92,20 +116,19 @@ struct HistogramMetric {
                 if countDelta > 0 {
                     let fraction = (target - prevCount) / countDelta
                     
-                    // If this is the first bucket, use exponential interpolation from 0
-                    if prevCount == 0 {
-                        // Assume exponential distribution within the first bucket
-                        return bucket.upperBound * (-log(1 - fraction))
-                    }
-                    
                     // If this is the infinity bucket, use the previous bound
                     if bucket.upperBound.isInfinite {
                         return prevBound
                     }
                     
-                    // Use exponential interpolation between bucket boundaries
+                    // Linear interpolation between bucket boundaries
+                    if prevCount == 0 {
+                        // For the first bucket, interpolate from 0
+                        return bucket.upperBound * fraction
+                    }
+                    
                     let scale = (bucket.upperBound - prevBound)
-                    return prevBound + scale * (-log(1 - fraction))
+                    return prevBound + scale * fraction
                 }
                 return bucket.upperBound
             }
