@@ -11,7 +11,7 @@ class ProcessManager: ObservableObject {
     }
     
     func startCollector(_ collector: CollectorInstance) throws {
-        if let active = activeCollector {
+        if activeCollector != nil {
             // Stop the currently running collector first
             try stopCollector()
         }

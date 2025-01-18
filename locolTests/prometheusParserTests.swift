@@ -45,9 +45,31 @@ final class PrometheusParserTests: XCTestCase {
         let metrics = try PrometheusParser.parse(input)
         
         XCTAssertEqual(metrics.count, 1)
-        XCTAssertEqual(metrics[0].name, "http_request_duration_seconds")
-        XCTAssertEqual(metrics[0].type, .histogram)
-        XCTAssertEqual(metrics[0].values.count, 6)
+        let metric = metrics[0]
+        XCTAssertEqual(metric.name, "http_request_duration_seconds")
+        XCTAssertEqual(metric.type, .histogram)
+        
+        // Verify histogram components
+        let buckets = metric.values.filter { $0.labels["le"] != nil }
+        XCTAssertEqual(buckets.count, 4, "Should have 4 buckets")
+        
+        // Verify bucket values
+        let sortedBuckets = buckets.sorted { 
+            let le1 = Double($0.labels["le"]!.replacingOccurrences(of: "+Inf", with: "inf")) ?? 0
+            let le2 = Double($1.labels["le"]!.replacingOccurrences(of: "+Inf", with: "inf")) ?? 0
+            return le1 < le2
+        }
+        XCTAssertEqual(sortedBuckets[0].value, 1, "First bucket should have count 1")
+        XCTAssertEqual(sortedBuckets[1].value, 4, "Second bucket should have count 4")
+        XCTAssertEqual(sortedBuckets[2].value, 5, "Third bucket should have count 5")
+        XCTAssertEqual(sortedBuckets[3].value, 6, "Fourth bucket should have count 6")
+        
+        // Verify sum and count
+        let sum = metric.values.first { $0.labels.isEmpty && metric.name.hasSuffix("_sum") }
+        XCTAssertEqual(sum?.value, 8.35, "Sum should be 8.35")
+        
+        let count = metric.values.first { $0.labels.isEmpty && metric.name.hasSuffix("_count") }
+        XCTAssertEqual(count?.value, 6, "Count should be 6")
     }
     
     func testInvalidMetricName() {

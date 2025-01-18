@@ -32,7 +32,8 @@ struct Metric: Identifiable {
 struct HistogramMetric {
     private static let logger = Logger(subsystem: "io.aparker.locol", category: "HistogramMetric")
     
-    struct Bucket: Comparable {
+    struct Bucket: Identifiable, Comparable {
+        let id: Int
         let upperBound: Double
         let count: Double
         
@@ -54,6 +55,26 @@ struct HistogramMetric {
     var p50: Double { quantile(0.5) }
     var p95: Double { quantile(0.95) }
     var p99: Double { quantile(0.99) }
+    
+    /// Returns the non-infinite buckets sorted by upper bound, with their individual (non-cumulative) counts
+    var nonInfiniteBuckets: [Bucket] {
+        buckets.filter { !$0.upperBound.isInfinite }
+            .sorted()
+    }
+    
+    /// Get the lower bound for a bucket at a given index
+    func lowerBoundForBucket(at index: Int) -> Double {
+        guard index > 0, index < nonInfiniteBuckets.count else { return 0 }
+        return nonInfiniteBuckets[index - 1].upperBound
+    }
+    
+    /// Get the bucket value (non-cumulative count) for a bucket at a given index
+    func bucketValue(at index: Int) -> Double {
+        guard index < nonInfiniteBuckets.count else { return 0 }
+        let bucket = nonInfiniteBuckets[index]
+        let previousCount = index > 0 ? nonInfiniteBuckets[index - 1].count : 0
+        return bucket.count - previousCount
+    }
     
     /// Calculate any quantile (0-1) from the histogram buckets
     func quantile(_ q: Double) -> Double {
@@ -106,11 +127,13 @@ struct HistogramMetric {
         var buckets: [Bucket] = []
         var sum: Double?
         var count: Double?
+        var bucketId = 0
         
         for (labels, value) in samples {
             if let le = labels["le"] {
                 let upperBound = le == "+Inf" ? Double.infinity : Double(le) ?? Double.infinity
-                buckets.append(Bucket(upperBound: upperBound, count: value))
+                buckets.append(Bucket(id: bucketId, upperBound: upperBound, count: value))
+                bucketId += 1
                 logger.debug("Added bucket: le=\(le), count=\(value)")
             } else if labels.isEmpty || labels == baseLabels {
                 // This must be either sum or count
