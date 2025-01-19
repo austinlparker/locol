@@ -14,5 +14,4 @@ receivers:
 service:
   pipelines:
     metrics:
-      receivers:
-        - httpcheck
+      receivers: [httpcheck]

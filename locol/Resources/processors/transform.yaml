@@ -26,13 +26,10 @@ processors:
 service:
   pipelines:
     traces:
-      processors:
-        - transform
+      processors: [transform]
     metrics:
-      processors:
-        - transform
+      processors: [transform]
     logs:
-      processors:
-        - transform
+      processors: [transform]
 
 

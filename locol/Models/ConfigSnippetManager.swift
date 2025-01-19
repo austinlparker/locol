@@ -8,8 +8,37 @@ class ConfigSnippetManager: ObservableObject {
     @Published var previewConfig: String?
     @Published var previewHighlightRange: Range<String.Index>?
     
+    // Track the order of keys at each level of the YAML
+    private var keyOrder: [String: [String]] = [:]
     private let fileManager = FileManager.default
     private let logger = Logger(subsystem: "io.aparker.locol", category: "snippets")
+    
+    let defaultTemplate = """
+    receivers:
+      otlp:
+        protocols:
+          grpc:
+            endpoint: localhost:4317
+          http:
+            endpoint: localhost:4318
+
+    processors:
+      batch:
+
+    exporters:
+      debug:
+        verbosity: detailed
+
+    service:
+      pipelines:
+        traces:
+          receivers:
+            - otlp
+          processors:
+            - batch
+          exporters:
+            - debug
+    """
     
     init() {
         loadSnippets()
@@ -74,6 +103,10 @@ class ConfigSnippetManager: ObservableObject {
     func loadConfig(from path: String) {
         do {
             let content = try String(contentsOfFile: path, encoding: .utf8)
+            // Store the key order when loading the config
+            if let yaml = try Yams.compose(yaml: content) {
+                updateKeyOrder(from: yaml, path: "root")
+            }
             currentConfig = try Yams.load(yaml: content) as? [String: Any]
             // Generate preview
             if let config = currentConfig {
@@ -81,6 +114,27 @@ class ConfigSnippetManager: ObservableObject {
             }
         } catch {
             logger.error("Failed to load config: \(error.localizedDescription, privacy: .public)")
+        }
+    }
+    
+    private func updateKeyOrder(from node: Yams.Node, path: String) {
+        switch node {
+        case .mapping(let mapping):
+            // Store the order of keys at this level
+            keyOrder[path] = mapping.keys.compactMap { $0.string }
+            // Recursively process nested mappings
+            for (key, value) in mapping {
+                if let keyString = key.string {
+                    updateKeyOrder(from: value, path: "\(path).\(keyString)")
+                }
+            }
+        case .sequence(let sequence):
+            // Process items in sequences
+            for (index, item) in sequence.enumerated() {
+                updateKeyOrder(from: item, path: "\(path)[\(index)]")
+            }
+        case .scalar:
+            break
         }
     }
     
@@ -95,129 +149,177 @@ class ConfigSnippetManager: ObservableObject {
         try yamlString.write(to: URL(fileURLWithPath: path), atomically: true, encoding: .utf8)
     }
     
-    func previewSnippetMerge(_ snippet: ConfigSnippet, into config: [String: Any]) -> String {
-        do {
-            var updatedConfig = config
-            if let snippetConfig = snippet.parsedContent {
-                let typeKey = snippet.type.rawValue
-                let originalYaml = try formatConfig(config)
+    private func ensureServicePipelines(in config: inout [String: Any]) {
+        if config["service"] == nil {
+            config["service"] = [String: Any]()
+        }
+        if var serviceConfig = config["service"] as? [String: Any] {
+            if serviceConfig["pipelines"] == nil {
+                serviceConfig["pipelines"] = [String: Any]()
+                config["service"] = serviceConfig
+            }
+        }
+    }
+    
+    private func mergeConfigs(base: [String: Any], with new: [String: Any], typeKey: String) throws -> [String: Any] {
+        var result = base
+        
+        // Recursive merge function to handle nested structures
+        func merge(_ existing: Any, with new: Any, path: String) -> Any {
+            logger.info("Merging at path: \(path, privacy: .public)")
+            
+            if let existingDict = existing as? [String: Any],
+               let newDict = new as? [String: Any] {
+                var result = existingDict
                 
-                // Handle both map and array values
-                if var existingSection = config[typeKey] as? [String: Any] {
-                    // Merge maps
-                    if let newSection = snippetConfig[typeKey] as? [String: Any] {
-                        for (key, value) in newSection {
-                            existingSection[key] = value
-                        }
-                        updatedConfig[typeKey] = existingSection
+                // Get or create ordered keys for this level
+                var orderedKeys = keyOrder[path] ?? Array(existingDict.keys)
+                
+                // Add any new keys
+                for key in newDict.keys where !orderedKeys.contains(key) {
+                    orderedKeys.append(key)
+                }
+                
+                keyOrder[path] = orderedKeys
+                
+                // Merge all keys recursively
+                for (key, newValue) in newDict {
+                    let newPath = "\(path).\(key)"
+                    if let existingValue = existingDict[key] {
+                        result[key] = merge(existingValue, with: newValue, path: newPath)
+                    } else {
+                        result[key] = newValue
                     }
-                } else if var existingArray = config[typeKey] as? [[String: Any]] {
-                    // Merge arrays
-                    if let newArray = snippetConfig[typeKey] as? [[String: Any]] {
-                        existingArray.append(contentsOf: newArray)
-                        updatedConfig[typeKey] = existingArray
+                }
+                
+                return result
+            } else if let existingArray = existing as? [Any],
+                      let newArray = new as? [Any] {
+                return existingArray + newArray
+            } else {
+                return new
+            }
+        }
+        
+        // Just merge everything in the snippet
+        for (key, value) in new {
+            let path = "root.\(key)"
+            if let existing = result[key] {
+                result[key] = merge(existing, with: value, path: path)
+            } else {
+                result[key] = value
+                // Add to root key order if new
+                if var rootKeys = keyOrder["root"] {
+                    if !rootKeys.contains(key) {
+                        rootKeys.append(key)
+                        keyOrder["root"] = rootKeys
                     }
                 } else {
-                    // No existing value, just set it
-                    updatedConfig[typeKey] = snippetConfig[typeKey]
-                }
-                
-                let updatedYaml = try formatConfig(updatedConfig)
-                
-                // Find the range of the changed section
-                if let range = findChangedRange(original: originalYaml, updated: updatedYaml) {
-                    previewHighlightRange = range
+                    keyOrder["root"] = [key]
                 }
             }
-            return try formatConfig(updatedConfig)
+        }
+        
+        return result
+    }
+    
+    func previewSnippetMerge(_ snippet: ConfigSnippet, into config: [String: Any]) -> String {
+        do {
+            if let snippetConfig = snippet.parsedContent {
+                let merged = try mergeConfigs(base: config, with: snippetConfig, typeKey: snippet.type.rawValue)
+                return try formatConfig(merged)
+            }
+            return try formatConfig(config)
         } catch {
             logger.error("Failed to preview snippet merge: \(error.localizedDescription, privacy: .public)")
-            previewHighlightRange = nil
             return try! formatConfig(config)  // Use original config on error
         }
     }
     
-    private func findChangedRange(original: String, updated: String) -> Range<String.Index>? {
-        let originalLines = original.components(separatedBy: .newlines)
-        let updatedLines = updated.components(separatedBy: .newlines)
+    func mergeSnippet(_ snippet: ConfigSnippet) throws {
+        guard var config = currentConfig,
+              let snippetConfig = snippet.parsedContent else { return }
         
-        // Find the first different line
-        var startIdx = 0
-        while startIdx < min(originalLines.count, updatedLines.count) && originalLines[startIdx] == updatedLines[startIdx] {
-            startIdx += 1
-        }
+        config = try mergeConfigs(base: config, with: snippetConfig, typeKey: snippet.type.rawValue)
+        logger.info("Final key order state: \(self.keyOrder, privacy: .public)")
         
-        // Find the last different line
-        var endIdx = 0
-        while endIdx < min(originalLines.count, updatedLines.count) && 
-              originalLines[originalLines.count - 1 - endIdx] == updatedLines[updatedLines.count - 1 - endIdx] {
-            endIdx += 1
-        }
-        
-        // Convert line indices to string range
-        if startIdx < updatedLines.count {
-            let prefix = updatedLines[..<startIdx].joined(separator: "\n")
-            let changedSection = updatedLines[startIdx..<(updatedLines.count - endIdx)].joined(separator: "\n")
-            
-            let start = updated.index(updated.startIndex, offsetBy: prefix.count + (prefix.isEmpty ? 0 : 1))
-            let end = updated.index(start, offsetBy: changedSection.count)
-            return start..<end
-        }
-        
-        return nil
+        currentConfig = config
+        previewConfig = try formatConfig(config)
     }
     
-    func mergeSnippet(_ snippet: ConfigSnippet) throws {
-        guard var config = currentConfig else { return }
-        
-        if let snippetConfig = snippet.parsedContent {
-            let typeKey = snippet.type.rawValue
-            
-            // Handle both map and array values
-            if var existingSection = config[typeKey] as? [String: Any] {
-                // Merge maps
-                if let newSection = snippetConfig[typeKey] as? [String: Any] {
-                    for (key, value) in newSection {
-                        existingSection[key] = value
-                    }
-                    config[typeKey] = existingSection
-                }
-            } else if var existingArray = config[typeKey] as? [[String: Any]] {
-                // Merge arrays
-                if let newArray = snippetConfig[typeKey] as? [[String: Any]] {
-                    existingArray.append(contentsOf: newArray)
-                    config[typeKey] = existingArray
-                }
-            } else {
-                // No existing value, just set it
-                config[typeKey] = snippetConfig[typeKey]
-            }
-            
-            currentConfig = config
-            previewConfig = try formatConfig(config)
+    private func getPipelineType(for componentType: String) -> String? {
+        switch componentType {
+        case "receivers": return "receivers"
+        case "processors": return "processors"
+        case "exporters": return "exporters"
+        default: return nil
         }
     }
     
     private func formatConfig(_ config: [String: Any]) throws -> String {
-        // Convert null values to empty maps
-        func convertNulls(_ dict: [String: Any]) -> [String: Any] {
-            var result: [String: Any] = [:]
-            for (key, value) in dict {
-                if let dict = value as? [String: Any] {
-                    result[key] = convertNulls(dict)
-                } else if let array = value as? [[String: Any]] {
-                    result[key] = array.map(convertNulls)
-                } else if value is NSNull || String(describing: value) == "null" {
-                    result[key] = [String: Any]()
-                } else {
-                    result[key] = value
+        func convertToNode(_ value: Any, path: String = "root") throws -> Node {
+            if let dict = value as? [String: Any] {
+                // Get the ordered keys for this path, falling back to dictionary keys if no order is stored
+                let orderedKeys = keyOrder[path] ?? Array(dict.keys)
+                
+                var mappings: [(Node, Node)] = []
+                for key in orderedKeys {
+                    if let value = dict[key] {
+                        let newPath = "\(path).\(key)"
+                        mappings.append((try Node(key), try convertToNode(value, path: newPath)))
+                    }
                 }
+                
+                // Add any new keys that weren't in the original order
+                let remainingKeys = Set(dict.keys).subtracting(orderedKeys)
+                for key in remainingKeys.sorted() {
+                    if let value = dict[key] {
+                        let newPath = "\(path).\(key)"
+                        mappings.append((try Node(key), try convertToNode(value, path: newPath)))
+                    }
+                }
+                
+                return try Node(mappings)
+            } else if let array = value as? [Any] {
+                var sequence = try Node(array.map { try convertToNode($0, path: "\(path)[]") })
+                // Only use flow style for arrays under 'service'
+                if path.contains(".service") || path.hasPrefix("service.") {
+                    sequence.sequence?.style = .flow
+                }
+                return sequence
+            } else if let string = value as? String {
+                return try Node(string)
+            } else if let number = value as? Int {
+                return try Node(number)
+            } else if let bool = value as? Bool {
+                return try Node(bool)
+            } else if value is NSNull || String(describing: value) == "null" {
+                return try Node([:])
             }
-            return result
+            return try Node(String(describing: value))
         }
         
-        let convertedConfig = convertNulls(config)
-        let node = try Yams.Node(convertedConfig)
+        let node = try convertToNode(config)
         return try Yams.serialize(node: node, indent: 2, sortKeys: false)
+    }
+    
+    // Helper function to handle YAML parsing errors
+    private func parseYAML(_ content: String) throws -> [String: Any]? {
+        do {
+            return try Yams.load(yaml: content) as? [String: Any]
+        } catch {
+            logger.error("Failed to parse YAML: \(error.localizedDescription, privacy: .public)")
+            throw error
+        }
+    }
+    
+    // Helper function to handle YAML serialization errors
+    private func serializeYAML(_ node: Node) throws -> String {
+        do {
+            return try Yams.serialize(node: node, indent: 2, sortKeys: false)
+        } catch {
+            logger.error("Failed to serialize YAML: \(error.localizedDescription, privacy: .public)")
+            throw error
+        }
     }
 } 

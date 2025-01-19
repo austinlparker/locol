@@ -12,5 +12,4 @@ receivers:
 service:
   pipelines:
     metrics:
-      receivers:
-        - hostmetrics
+      receivers: [hostmetrics]

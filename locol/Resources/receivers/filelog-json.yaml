@@ -1,6 +1,7 @@
 receivers:
   filelog/json:
-    include: [ /var/log/myservice/*.json ]
+    include: 
+      - /var/log/myservice/*.json 
     operators:
       - type: json_parser
         timestamp:
@@ -9,5 +10,4 @@ receivers:
 service:
   pipelines:
     logs:
-      receivers: 
-        - filelog/json
+      receivers: [filelog/json]

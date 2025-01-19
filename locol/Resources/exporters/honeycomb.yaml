@@ -6,11 +6,8 @@ exporters:
 service:
   pipelines:
     traces:
-      exporters:
-        - otlp/hny
+      exporters: [otlp/hny]
     metrics:
-      exporters:
-        - otlp/hny
+      exporters: [otlp/hny]
     logs:
-      exporters:
-        - otlp/hny
+      exporters: [otlp/hny]
