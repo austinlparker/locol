@@ -4,247 +4,139 @@ import Charts
 struct HistogramCard: View {
     let metric: Metric
     let histogram: HistogramMetric
+    @State private var selectedBucket: HistogramMetric.Bucket? = nil
     
     var body: some View {
         GroupBox {
-            VStack(alignment: .leading, spacing: 16) {
-                CardHeader(metric: metric)
-                StatsGrid(histogram: histogram)
-                HistogramChartView(histogram: histogram)
+            VStack(alignment: .leading, spacing: 8) {
+                // Header
+                Text(metric.name)
+                    .font(.headline)
+                
+                // Chart
+                BucketChart(histogram: histogram, metric: metric, selectedBucket: $selectedBucket)
+                    .frame(height: 200)
             }
-            .padding(16)
-        }
-    }
-}
-
-private struct CardHeader: View {
-    let metric: Metric
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(metric.name)
-                .font(.headline)
-                .foregroundStyle(.primary)
-            if !metric.labels.isEmpty {
-                Text(metric.labels.formattedLabels())
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-        }
-    }
-}
-
-private struct StatsGrid: View {
-    let histogram: HistogramMetric
-    
-    var body: some View {
-        LazyVGrid(columns: [
-            GridItem(.flexible()),
-            GridItem(.flexible()),
-            GridItem(.flexible())
-        ], spacing: 16) {
-            StatView(title: "Count", value: String(format: "%.0f", histogram.count))
-            StatView(title: "Sum", value: String(format: "%.2f", histogram.sum))
-            StatView(title: "Average", value: String(format: "%.2f", histogram.average))
-            StatView(title: "p50", value: String(format: "%.2f", histogram.p50))
-            StatView(title: "p95", value: String(format: "%.2f", histogram.p95))
-            StatView(title: "p99", value: String(format: "%.2f", histogram.p99))
-        }
-        .padding(.vertical, 8)
-    }
-}
-
-private struct StatView: View {
-    let title: String
-    let value: String
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title)
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.system(.title3, design: .rounded))
-                .foregroundStyle(.primary)
-        }
-    }
-}
-
-private struct HistogramChartView: View {
-    let histogram: HistogramMetric
-    @State private var selectedBucket: HistogramMetric.Bucket? = nil
-    
-    private func formatBucketLabel(_ value: Double) -> String {
-        if value.isInfinite {
-            return "∞"
-        }
-        if value == 0 {
-            return "0"
-        }
-        if value >= 1_000_000 {
-            return String(format: "%.0fM", value / 1_000_000)
-        }
-        if value >= 1_000 {
-            return String(format: "%.0fK", value / 1_000)
-        }
-        if value < 0.01 {
-            return String(format: "%.2e", value)
-        }
-        if value >= 100 {
-            return String(format: "%.0f", value)
-        }
-        if value >= 10 {
-            return String(format: "%.1f", value)
-        }
-        return String(format: "%.2f", value)
-    }
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Distribution")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            
-            BucketChart(
-                histogram: histogram,
-                selectedBucket: $selectedBucket,
-                formatBucketLabel: formatBucketLabel
-            )
+            .padding()
         }
     }
 }
 
 private struct BucketChart: View {
     let histogram: HistogramMetric
+    let metric: Metric
     @Binding var selectedBucket: HistogramMetric.Bucket?
-    let formatBucketLabel: (Double) -> String
+    
+    private var chartContent: some View {
+        Chart {
+            ForEach(histogram.nonInfiniteBuckets) { bucket in
+                BarMark(
+                    x: .value("Bucket", Double(bucket.id)),
+                    y: .value("Count", bucket.bucketValue),
+                    width: 30
+                )
+                .foregroundStyle(bucket.id == selectedBucket?.id ? Color.blue : Color.blue.opacity(0.7))
+            }
+            
+            RuleMark(x: .value("p50", Double(histogram.p50Index)))
+                .foregroundStyle(.green)
+            
+            RuleMark(x: .value("p95", Double(histogram.p95Index)))
+                .foregroundStyle(.yellow)
+            
+            RuleMark(x: .value("p99", Double(histogram.p99Index)))
+                .foregroundStyle(.red)
+        }
+        .chartXScale(domain: histogram.chartDomain)
+        .chartXAxis {
+            AxisMarks { value in
+                if let index = value.as(Double.self)?.rounded(.down),
+                   let bucket = histogram.bucketAtIndex(Int(index)) {
+                    AxisValueLabel {
+                        Text(metric.formatValueWithInferredUnit(bucket.upperBound))
+                            .font(.caption)
+                    }
+                    AxisGridLine()
+                    AxisTick()
+                }
+            }
+        }
+        .chartYAxis {
+            AxisMarks { value in
+                AxisValueLabel {
+                    Text(String(format: "%.0f", value.as(Double.self)!))
+                        .font(.caption)
+                }
+                AxisGridLine()
+                AxisTick()
+            }
+        }
+        .chartLegend(.hidden)
+        .chartPlotStyle { plotArea in
+            plotArea
+                .background(.background.opacity(0.5))
+                .border(.quaternary)
+        }
+    }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Chart {
-                ForEach(histogram.nonInfiniteBuckets) { bucket in
-                    BarMark(
-                        x: .value("Bucket", (bucket.upperBound + bucket.lowerBound) / 2 as Double),
-                        y: .value("Count", bucket.bucketValue as Double)
-                    )
-                    .foregroundStyle(bucket.id == selectedBucket?.id ? Color.blue : Color.blue.opacity(0.7))
-                }
-                
-                RuleMark(
-                    x: .value("p50", histogram.p50 as Double)
-                )
-                .foregroundStyle(Color.green)
-                .lineStyle(StrokeStyle(lineWidth: 1, dash: [5, 5]))
-                
-                RuleMark(
-                    x: .value("p95", histogram.p95 as Double)
-                )
-                .foregroundStyle(Color.orange)
-                .lineStyle(StrokeStyle(lineWidth: 1, dash: [5, 5]))
-                
-                RuleMark(
-                    x: .value("p99", histogram.p99 as Double)
-                )
-                .foregroundStyle(Color.red)
-                .lineStyle(StrokeStyle(lineWidth: 1, dash: [5, 5]))
-            }
-            //.chartXScale(domain: histogram.xAxisDomain)
-            //.chartYScale(domain: .automatic(includesZero: true))
-            .frame(height: 200)
-            .chartYAxis {
-                AxisMarks(position: .leading)
-            }
-            .chartXAxis {
-                AxisMarks { value in
-                    if let number = value.as(Double.self) {
-                        AxisValueLabel {
-                            Text(formatBucketLabel(number))
-                                .font(.caption)
-                                .rotationEffect(.degrees(-45))
+            Text("Distribution")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            
+            VStack(alignment: .leading, spacing: 4) {
+                chartContent
+                    .chartOverlay { proxy in
+                        GeometryReader { geometry in
+                            Rectangle()
+                                .fill(.clear)
+                                .contentShape(Rectangle())
+                                .onContinuousHover { phase in
+                                    switch phase {
+                                    case .active(let location):
+                                        guard let plotFrame = proxy.plotFrame,
+                                              let bucketIndex = proxy.value(atX: location.x - geometry[plotFrame].origin.x) as Double? else {
+                                            selectedBucket = nil
+                                            return
+                                        }
+                                        
+                                        selectedBucket = histogram.bucketAtIndex(Int(round(bucketIndex)))
+                                        
+                                    case .ended:
+                                        selectedBucket = nil
+                                    }
+                                }
                         }
                     }
+                
+                if let selectedBucket = selectedBucket {
+                    ChartTooltip(bucket: selectedBucket, metric: metric)
+                } else {
+                    ChartLegend(histogram: histogram, metric: metric)
                 }
-            }
-            .chartPlotStyle { plotArea in
-                plotArea
-                    .background(.background.opacity(0.5))
-                    .border(.quaternary)
-            }
-            .chartOverlay { proxy in
-                GeometryReader { geometry in
-                    Rectangle()
-                        .fill(.clear)
-                        .contentShape(Rectangle())
-                        .onContinuousHover { phase in
-                            switch phase {
-                            case .active(let location):
-                                guard let plotFrame = proxy.plotFrame else { return }
-                                let x = location.x - geometry[plotFrame].origin.x
-                                guard x >= 0, x <= geometry[plotFrame].width else {
-                                    selectedBucket = nil
-                                    return
-                                }
-                                
-                                let relativeXPosition = x / geometry[plotFrame].width
-                                let bucketIndex = Int(relativeXPosition * Double(histogram.nonInfiniteBuckets.count))
-                                if bucketIndex >= 0, bucketIndex < histogram.nonInfiniteBuckets.count {
-                                    selectedBucket = histogram.nonInfiniteBuckets[bucketIndex]
-                                }
-                            case .ended:
-                                selectedBucket = nil
-                            }
-                        }
-                }
-            }
-            
-            if let selected = selectedBucket {
-                ChartTooltip(
-                    upperBound: selected.upperBound,
-                    count: selected.count,
-                    bucketValue: selected.bucketValue,
-                    lowerBound: selected.lowerBound,
-                    totalCount: histogram.count
-                )
-            } else {
-                ChartLegend()
             }
         }
     }
 }
 
 private struct ChartTooltip: View {
-    let upperBound: Double
-    let count: Double
-    let bucketValue: Double
-    let lowerBound: Double
-    let totalCount: Double
-    
-    private var percentage: Double {
-        (count / totalCount) * 100
-    }
-    
-    private func formatValue(_ value: Double) -> String {
-        if value >= 1_000_000 {
-            return String(format: "%.1fM", value / 1_000_000)
-        } else if value >= 1_000 {
-            return String(format: "%.1fK", value / 1_000)
-        } else {
-            return String(format: "%.1f", value)
-        }
-    }
+    let bucket: HistogramMetric.Bucket
+    let metric: Metric
     
     var body: some View {
-        HStack(spacing: 8) {
-            Text("\(formatValue(lowerBound)) - \(formatValue(upperBound))")
+        VStack(alignment: .leading, spacing: 4) {
+            Text("\(metric.formatValueWithInferredUnit(bucket.lowerBound)) - \(metric.formatValueWithInferredUnit(bucket.upperBound))")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text("•")
-                .foregroundStyle(.secondary)
-            Text("\(Int(count))")
-                .font(.caption.bold())
-            Text("(\(String(format: "%.1f%%", percentage)))")
-                .font(.caption)
-                .foregroundColor(.secondary)
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(Color.blue)
+                    .frame(width: 8, height: 8)
+                LabelDisplay(labels: metric.labels, showAll: false, showOnlyPrimary: true)
+                Text("\(Int(bucket.bucketValue)) samples (\(String(format: "%.1f%%", bucket.percentage)))")
+                    .font(.caption.bold())
+            }
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 8)
@@ -259,39 +151,47 @@ private struct ChartTooltip: View {
 }
 
 private struct ChartLegend: View {
+    let histogram: HistogramMetric
+    let metric: Metric
+    
     var body: some View {
         HStack(spacing: 16) {
-            HStack(spacing: 4) {
-                Rectangle()
-                    .fill(Color.blue.opacity(0.7))
-                    .frame(width: 12, height: 8)
-                Text("Bucket Count")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(Color.blue)
+                    .frame(width: 8, height: 8)
+                LabelDisplay(labels: metric.labels, showAll: false)
+                Text("\(Int(histogram.count)) samples")
+                    .font(.caption.bold())
             }
-            ForEach(["p50", "p95", "p99"], id: \.self) { percentile in
-                HStack(spacing: 4) {
-                    Rectangle()
-                        .fill(percentileColor(for: percentile))
-                        .frame(width: 12, height: 1)
-                    Text(percentile)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
+            
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(Color.green)
+                    .frame(width: 8, height: 8)
+                Text("p50: \(metric.formatValueWithInferredUnit(histogram.p50))")
+                    .font(.caption.bold())
+            }
+            
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(Color.yellow)
+                    .frame(width: 8, height: 8)
+                Text("p95: \(metric.formatValueWithInferredUnit(histogram.p95))")
+                    .font(.caption.bold())
+            }
+            
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(Color.red)
+                    .frame(width: 8, height: 8)
+                Text("p99: \(metric.formatValueWithInferredUnit(histogram.p99))")
+                    .font(.caption.bold())
             }
         }
         .padding(.vertical, 6)
         .frame(height: 28)
         .frame(maxWidth: .infinity)
-    }
-    
-    private func percentileColor(for percentile: String) -> Color {
-        switch percentile {
-        case "p50": return .green
-        case "p95": return .orange
-        case "p99": return .red
-        default: return .gray
-        }
     }
 }
 
@@ -299,38 +199,34 @@ private struct ChartLegend: View {
 struct HistogramCard_Previews: PreviewProvider {
     static var previews: some View {
         let now = Date()
-        let labels = ["operation": "request", "path": "/api/data"]
+        let labels = [
+            "processor": "batch",
+            "service_instance_id": "f8b0a006-7bd8-4890-a411-3db118b918cb",
+            "service_name": "otelcol-contrib",
+            "service_version": "0.117.0"
+        ]
         
-        // Create 10 fixed-width buckets from 0 to 100ms
-        let bucketBoundaries = [10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0]
+        // Create buckets from the OpenTelemetry data
+        let bucketBoundaries = [10.0, 25.0, 50.0, 75.0, 100.0, 250.0, 500.0, 750.0, 1000.0, 2000.0, 3000.0, 4000.0, 5000.0, 6000.0, 7000.0, 8000.0, 9000.0, 10000.0, 20000.0, 30000.0, 50000.0, 100000.0]
         
         var samples: [(labels: [String: String], value: Double)] = []
-        let totalSamples = 1000.0
-        let mean = 50.0  // Center at 50ms
-        let stdDev = 15.0  // Most data between 20-80ms
         
-        // Generate bucket samples
-        var prevProb = 0.0
+        // Add bucket samples with cumulative counts
         for bound in bucketBoundaries {
-            // Calculate probability for this bucket using the normal CDF
-            let z = (bound - mean) / stdDev
-            let prob = (1.0 + erf(z / sqrt(2.0))) / 2.0
-            
             var bucketLabels = labels
             bucketLabels["le"] = String(bound)
-            samples.append((labels: bucketLabels, value: prob * totalSamples))
-            
-            prevProb = prob
+            // All buckets up to 2000 have count 0, then count 1 for the rest
+            samples.append((labels: bucketLabels, value: bound <= 2000 ? 0 : 1))
         }
         
         // Add infinity bucket
         var infLabels = labels
         infLabels["le"] = "+Inf"
-        samples.append((labels: infLabels, value: totalSamples))
+        samples.append((labels: infLabels, value: 1))
         
-        // Add _sum and _count
-        samples.append((labels: labels, value: totalSamples * mean))  // sum
-        samples.append((labels: labels, value: totalSamples))  // count
+        // Add sum and count
+        samples.append((labels: labels, value: 2393))  // sum
+        samples.append((labels: labels, value: 1))     // count
         
         // Create histogram from samples
         let histogram = HistogramMetric.from(
@@ -339,12 +235,12 @@ struct HistogramCard_Previews: PreviewProvider {
         )!
         
         let metric = Metric(
-            name: "Response Time (ms)",
+            name: "otelcol_processor_batch_batch_send_size",
             type: .histogram,
-            help: "API response time distribution",
+            help: "Number of units in the batch",
             labels: labels,
             timestamp: now,
-            value: totalSamples * mean,
+            value: 2393,
             histogram: histogram
         )
         

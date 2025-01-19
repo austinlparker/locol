@@ -17,120 +17,136 @@ enum GaugeVisualization {
 
 struct GaugeCard: View {
     let metrics: [Metric]
-    @State private var visualization: GaugeVisualization = .number
-    @State private var selectedValue: (date: Date, value: Double)? = nil
-    
-    private var currentValue: Double {
-        metrics.last?.value ?? 0
-    }
+    @State private var selectedValue: (timestamp: Date, value: Double)? = nil
+    @State private var visualization: GaugeVisualization = .lineChart
     
     var body: some View {
         GroupBox {
-            VStack(alignment: .leading, spacing: 16) {
-                CardHeader(metrics: metrics, visualization: $visualization)
+            VStack(alignment: .leading, spacing: 8) {
+                // Header
+                Text(metrics[0].name)
+                    .font(.headline)
                 
-                // Visualization
+                // Chart
                 switch visualization {
                 case .number:
-                    NumberView(value: currentValue)
+                    NumberView(value: metrics.last?.value ?? 0, metric: metrics[0])
                 case .radial:
-                    RadialView(value: currentValue)
+                    RadialView(value: metrics.last?.value ?? 0, metric: metrics[0])
                 case .lineChart:
                     LineChartView(metrics: metrics, selectedValue: $selectedValue)
                 }
             }
-            .padding(16)
+            .padding()
         }
     }
 }
 
-private struct CardHeader: View {
+private struct LineChartView: View {
     let metrics: [Metric]
-    @Binding var visualization: GaugeVisualization
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(metrics.first?.name ?? "")
-                        .font(.headline)
-                        .foregroundStyle(.primary)
-                    if let labels = metrics.first?.labels,
-                       !labels.isEmpty {
-                        Text(labels.formattedLabels())
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                
-                Spacer()
-            }
-            
-            // Visualization toggle
-            Picker("", selection: $visualization) {
-                ForEach([GaugeVisualization.number, .radial, .lineChart], id: \.self) { type in
-                    Image(systemName: type.icon)
-                        .help(String(describing: type))
-                }
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 120)
-            .labelsHidden()
-        }
-    }
-}
-
-private struct NumberView: View {
-    let value: Double
+    @Binding var selectedValue: (timestamp: Date, value: Double)?
     
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Current Value")
+            Text("Value Over Time")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
-            Text(String(format: "%.2f", value))
-                .font(.system(.largeTitle, design: .rounded))
-                .foregroundStyle(.primary)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 24)
-    }
-}
-
-private struct RadialView: View {
-    let value: Double
-    
-    var body: some View {
-        VStack(alignment: .center, spacing: 8) {
-            Gauge(value: min(max(value, 0), value + 100), in: 0...(value + 100)) {
-                Text(String(format: "%.1f", value))
-            } currentValueLabel: {
-                Text(String(format: "%.1f", value))
-                    .font(.system(.headline, design: .rounded))
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Chart {
+                    ForEach(metrics, id: \.timestamp) { metric in
+                        LineMark(
+                            x: .value("Time", metric.timestamp),
+                            y: .value("Value", metric.value)
+                        )
+                        .foregroundStyle(Color.blue)
+                    }
+                    
+                    if let selectedValue = selectedValue {
+                        RuleMark(x: .value("Time", selectedValue.timestamp))
+                            .foregroundStyle(.gray.opacity(0.3))
+                    }
+                }
+                .chartXAxis {
+                    AxisMarks(values: .stride(by: .minute)) { _ in
+                        AxisGridLine()
+                        AxisTick()
+                        AxisValueLabel(format: .dateTime.hour().minute())
+                    }
+                }
+                .chartYAxis {
+                    AxisMarks { value in
+                        let val = value.as(Double.self)!
+                        AxisValueLabel {
+                            Text(metrics[0].formatValueWithInferredUnit(val))
+                                .font(.caption)
+                        }
+                        AxisGridLine()
+                        AxisTick()
+                    }
+                }
+                .chartLegend(.hidden)
+                .chartPlotStyle { plotArea in
+                    plotArea
+                        .background(.background.opacity(0.5))
+                        .border(.quaternary)
+                }
+                .chartOverlay { proxy in
+                    GeometryReader { geometry in
+                        Rectangle()
+                            .fill(.clear)
+                            .contentShape(Rectangle())
+                            .onContinuousHover { phase in
+                                switch phase {
+                                case .active(let location):
+                                    guard let plotFrame = proxy.plotFrame else { return }
+                                    let x = location.x - geometry[plotFrame].origin.x
+                                    guard x >= 0, x <= geometry[plotFrame].width else {
+                                        selectedValue = nil
+                                        return
+                                    }
+                                    
+                                    guard let timestamp = proxy.value(atX: x) as Date?,
+                                          let value = proxy.value(atX: x, as: Double.self) else { return }
+                                    
+                                    selectedValue = (timestamp: timestamp, value: value)
+                                    
+                                case .ended:
+                                    selectedValue = nil
+                                }
+                            }
+                    }
+                }
+                
+                // Legend or Tooltip area with fixed height
+                if let selectedValue = selectedValue {
+                    ChartTooltip(timestamp: selectedValue.timestamp, value: selectedValue.value, metric: metrics[0])
+                } else {
+                    ChartLegend(value: metrics.last?.value ?? 0, metric: metrics[0])
+                }
             }
-            .gaugeStyle(.accessoryCircularCapacity)
-            .scaleEffect(2.5)
-            .frame(height: 120)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 16)
     }
 }
 
 private struct ChartTooltip: View {
-    let date: Date
+    let timestamp: Date
     let value: Double
+    let metric: Metric
     
     var body: some View {
-        HStack(spacing: 8) {
-            Text(date, format: .dateTime.hour().minute().second())
+        VStack(alignment: .leading, spacing: 4) {
+            Text(timestamp.formatted(.dateTime.hour().minute().second()))
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text("•")
-                .foregroundStyle(.secondary)
-            Text(String(format: "%.2f", value))
-                .font(.caption.bold())
-                .foregroundStyle(.primary)
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(Color.blue)
+                    .frame(width: 8, height: 8)
+                LabelDisplay(labels: metric.labels, showAll: false, showOnlyPrimary: true)
+                Text(metric.formatValueWithInferredUnit(value))
+                    .font(.caption.bold())
+            }
         }
         .padding(.vertical, 6)
         .padding(.horizontal, 8)
@@ -145,14 +161,17 @@ private struct ChartTooltip: View {
 }
 
 private struct ChartLegend: View {
+    let value: Double
+    let metric: Metric
+    
     var body: some View {
-        HStack(spacing: 4) {
+        HStack(spacing: 8) {
             Circle()
                 .fill(Color.blue)
                 .frame(width: 8, height: 8)
-            Text("Value")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            LabelDisplay(labels: metric.labels, showAll: false)
+            Text(metric.formatValueWithInferredUnit(value))
+                .font(.caption.bold())
         }
         .padding(.vertical, 6)
         .frame(height: 28)
@@ -160,135 +179,44 @@ private struct ChartLegend: View {
     }
 }
 
-private struct ChartOverlay: View {
-    let proxy: ChartProxy
-    let metrics: [Metric]
-    @Binding var selectedValue: (date: Date, value: Double)?
+private struct NumberView: View {
+    let value: Double
+    let metric: Metric
     
     var body: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .top) {
-                Rectangle()
-                    .fill(.clear)
-                    .contentShape(Rectangle())
-                    .onContinuousHover { phase in
-                        switch phase {
-                        case .active(let location):
-                            guard let plotFrame = proxy.plotFrame else { return }
-                            let x = location.x - geometry[plotFrame].origin.x
-                            guard x >= 0, x <= geometry[plotFrame].width else {
-                                selectedValue = nil
-                                return
-                            }
-                            
-                            // Find closest metric based on x position
-                            let relativeXPosition = x / geometry[plotFrame].width
-                            let dateRange = metrics.map(\.timestamp)
-                            guard let minDate = dateRange.min(),
-                                  let maxDate = dateRange.max() else { return }
-                            
-                            let date = Date(timeIntervalSince1970: 
-                                minDate.timeIntervalSince1970 +
-                                (maxDate.timeIntervalSince1970 - minDate.timeIntervalSince1970) * relativeXPosition
-                            )
-                            
-                            if let closest = metrics.min(by: {
-                                abs($0.timestamp.timeIntervalSince(date)) < abs($1.timestamp.timeIntervalSince(date))
-                            }) {
-                                selectedValue = (closest.timestamp, closest.value)
-                            }
-                        case .ended:
-                            selectedValue = nil
-                        }
-                    }
-            }
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Current Value")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Text(metric.formatValueWithInferredUnit(value))
+                .font(.system(.largeTitle, design: .rounded))
+                .foregroundStyle(.primary)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, 24)
     }
 }
 
-private struct LineChartView: View {
-    let metrics: [Metric]
-    @Binding var selectedValue: (date: Date, value: Double)?
+private struct RadialView: View {
+    let value: Double
+    let metric: Metric
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Value Over Time")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-            
-            VStack(alignment: .leading, spacing: 4) {
-                Chart {
-                    ForEach(metrics) { metric in
-                        LineMark(
-                            x: .value("Time", metric.timestamp),
-                            y: .value("Value", metric.value)
-                        )
-                        .foregroundStyle(by: .value("Series", "Value"))
-                        .interpolationMethod(.monotone)
-                    }
-                    
-                    if let selected = selectedValue {
-                        RuleMark(
-                            x: .value("Time", selected.date)
-                        )
-                        .foregroundStyle(.gray.opacity(0.3))
-                        
-                        PointMark(
-                            x: .value("Time", selected.date),
-                            y: .value("Value", selected.value)
-                        )
-                        .foregroundStyle(.primary)
-                    }
-                }
-                .chartForegroundStyleScale([
-                    "Value": Color.blue
-                ])
-                .chartLegend(.hidden)
-                .chartYAxis {
-                    AxisMarks(position: .leading) { value in
-                        if let val = value.as(Double.self) {
-                            AxisValueLabel {
-                                Text(String(format: "%.1f", val))
-                                    .font(.caption)
-                            }
-                        }
-                    }
-                }
-                .chartXAxis {
-                    AxisMarks { value in
-                        if let date = value.as(Date.self) {
-                            AxisValueLabel {
-                                Text(date, format: .dateTime.hour().minute())
-                                    .font(.caption)
-                            }
-                        }
-                    }
-                }
-                .chartYScale(domain: .automatic(includesZero: true))
-                .frame(height: 200)
-                .chartPlotStyle { plotArea in
-                    plotArea
-                        .background(.background.opacity(0.5))
-                        .border(.quaternary)
-                }
-                .chartOverlay(alignment: .top) { proxy in
-                    ChartOverlay(
-                        proxy: proxy,
-                        metrics: metrics,
-                        selectedValue: $selectedValue
-                    )
-                }
-                
-                // Legend or Tooltip area with fixed height
-                if let selected = selectedValue {
-                    ChartTooltip(date: selected.date, value: selected.value)
-                } else {
-                    ChartLegend()
-                }
+        VStack(alignment: .center, spacing: 8) {
+            Gauge(value: min(max(value, 0), value + 100), in: 0...(value + 100)) {
+                Text(metric.formatValueWithInferredUnit(value))
+            } currentValueLabel: {
+                Text(metric.formatValueWithInferredUnit(value))
+                    .font(.system(.headline, design: .rounded))
             }
+            .gaugeStyle(.accessoryCircularCapacity)
+            .scaleEffect(2.5)
+            .frame(height: 120)
         }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 16)
     }
-} 
+}
 
 #if DEBUG
 struct GaugeCard_Previews: PreviewProvider {

@@ -27,6 +27,58 @@ struct Metric: Identifiable {
         self.histogram = histogram
         self.id = MetricKeyGenerator.generateKey(name: name, labels: labels)
     }
+    
+    func formatValueWithInferredUnit(_ value: Double) -> String {
+        // Check for byte-based metrics
+        let byteSuffixes = ["_bytes", "_byte", "_size"]
+        let timeSuffixes = ["_seconds", "_second", "_duration", "_time", "_latency"]
+        
+        let isBytes = byteSuffixes.contains { name.hasSuffix($0) }
+        let isTime = timeSuffixes.contains { name.hasSuffix($0) }
+        
+        if value == 0 {
+            return isTime ? "0s" : "0"
+        }
+        
+        if isBytes {
+            let kb = 1024.0
+            let mb = kb * 1024.0
+            let gb = mb * 1024.0
+            
+            if value < kb {
+                return String(format: "%.0fB", value)
+            } else if value < mb {
+                return String(format: "%.1fKB", value / kb)
+            } else if value < gb {
+                return String(format: "%.1fMB", value / mb)
+            } else {
+                return String(format: "%.1fGB", value / gb)
+            }
+        } else if isTime {
+            if value < 0.001 {
+                return String(format: "%.0fµs", value * 1_000_000)
+            } else if value < 1 {
+                return String(format: "%.1fms", value * 1_000)
+            } else if value < 60 {
+                return String(format: "%.1fs", value)
+            } else if value < 3600 {
+                return String(format: "%.1fm", value / 60)
+            } else {
+                return String(format: "%.1fh", value / 3600)
+            }
+        } else {
+            // For non-byte values, use K/M/G suffixes based on magnitude
+            if abs(value) < 1000 {
+                return String(format: "%.1f", value)
+            } else if abs(value) < 1_000_000 {
+                return String(format: "%.1fK", value / 1000)
+            } else if abs(value) < 1_000_000_000 {
+                return String(format: "%.1fM", value / 1_000_000)
+            } else {
+                return String(format: "%.1fG", value / 1_000_000_000)
+            }
+        }
+    }
 }
 
 struct HistogramMetric {
@@ -66,7 +118,7 @@ struct HistogramMetric {
             
             let lowerBound = index > 0 ? buckets[index - 1].upperBound : 0
             let bucketValue = index > 0 ? bucket.count - buckets[index - 1].count : bucket.count
-            let percentage = (bucketValue / Double(count)) * 100
+            let percentage = count > 0 ? (bucketValue / count) * 100 : 0
             
             return Bucket(
                 id: bucket.id,
@@ -84,6 +136,28 @@ struct HistogramMetric {
             return 0...1 // Fallback range if no buckets
         }
         return 0...max
+    }
+    
+    func bucketIndex(for value: Double) -> Int? {
+        return nonInfiniteBuckets.firstIndex(where: { $0.upperBound >= value })
+    }
+    
+    var p50Index: Int {
+        nonInfiniteBuckets.firstIndex(where: { $0.upperBound >= p50 })!
+    }
+    
+    var p95Index: Int {
+        nonInfiniteBuckets.firstIndex(where: { $0.upperBound >= p95 })!
+    }
+    
+    var p99Index: Int {
+        nonInfiniteBuckets.firstIndex(where: { $0.upperBound >= p99 })!
+    }
+    
+    func findClosestBucket(to index: Double) -> Bucket? {
+        guard index >= 0, index < Double(nonInfiniteBuckets.count) else { return nil }
+        let roundedIndex = Int(round(index))
+        return nonInfiniteBuckets[roundedIndex]
     }
     
     /// Get the lower bound for a bucket at a given index
@@ -138,6 +212,44 @@ struct HistogramMetric {
         
         // If we get here, return the highest finite bucket's upper bound
         return buckets.sorted().dropLast().last?.upperBound ?? 0
+    }
+    
+    /// Infer the unit type from a metric name and format the value accordingly
+    func formatValueWithInferredUnit(_ value: Double, metricName: String) -> String {
+        // Common suffixes that indicate byte values
+        let byteSuffixes = ["_bytes", "_byte", "_size"]
+        let timeSuffixes = ["_seconds", "_second", "_duration", "_time", "_latency"]
+        
+        let isBytes = byteSuffixes.contains { metricName.hasSuffix($0) }
+        let isTime = timeSuffixes.contains { metricName.hasSuffix($0) }
+        
+        if isBytes {
+            // Format as bytes with appropriate unit
+            if value == 0 { return "0 B" }
+            if value < 1024 { return String(format: "%.0f B", value) }
+            if value < 1024 * 1024 { return String(format: "%.1f KB", value / 1024) }
+            if value < 1024 * 1024 * 1024 { return String(format: "%.1f MB", value / (1024 * 1024)) }
+            return String(format: "%.1f GB", value / (1024 * 1024 * 1024))
+        }
+        
+        if isTime {
+            // Format as time duration
+            if value == 0 { return "0s" }
+            if value < 0.001 { return String(format: "%.0f µs", value * 1_000_000) }
+            if value < 1 { return String(format: "%.0f ms", value * 1_000) }
+            if value < 60 { return String(format: "%.1f s", value) }
+            if value < 3600 { return String(format: "%.1f m", value / 60) }
+            return String(format: "%.1f h", value / 3600)
+        }
+        
+        // Default formatting for non-byte values
+        if value == 0 { return "0" }
+        if value >= 1_000_000 { return String(format: "%.1fM", value / 1_000_000) }
+        if value >= 1_000 { return String(format: "%.1fK", value / 1_000) }
+        if value < 0.01 { return String(format: "%.2e", value) }
+        if value >= 100 { return String(format: "%.0f", value) }
+        if value >= 10 { return String(format: "%.1f", value) }
+        return String(format: "%.2f", value)
     }
     
     /// Create a histogram from a set of samples that include buckets, sum, and count
@@ -201,5 +313,18 @@ struct HistogramMetric {
             timestamp: timestamp,
             labels: baseLabels
         )
+    }
+    
+    var chartDomain: ClosedRange<Double> {
+        -0.5...Double(nonInfiniteBuckets.count - 1) + 0.5
+    }
+    
+    var maxBucketValue: Double {
+        nonInfiniteBuckets.map(\.bucketValue).max() ?? 0
+    }
+    
+    func bucketAtIndex(_ index: Int) -> Bucket? {
+        guard index >= 0 && index < nonInfiniteBuckets.count else { return nil }
+        return nonInfiniteBuckets[index]
     }
 }

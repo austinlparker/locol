@@ -15,8 +15,8 @@ struct MetricsView: View {
                 // Regular metrics section
                 if !viewModel.groupedMetrics.regular.isEmpty {
                     Section {
-                        ForEach(viewModel.groupedMetrics.regular, id: \.0) { key, metrics in
-                            CounterCard(metrics: metrics, viewModel: viewModel, rateInterval: selectedRateInterval)
+                        ForEach(viewModel.groupedMetrics.regular, id: \.name) { name, series in
+                            CounterCard(name: name, series: series)
                         }
                     } header: {
                         Text("Counters")
@@ -26,6 +26,7 @@ struct MetricsView: View {
                     }
                 }
 
+                // Gauges
                 if !viewModel.groupedMetrics.gauges.isEmpty {
                     Section {
                         ForEach(viewModel.groupedMetrics.gauges, id: \.0) { key, metrics in

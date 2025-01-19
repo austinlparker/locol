@@ -275,8 +275,9 @@ class MetricsManager: ObservableObject {
         
         if let histogram = HistogramMetric.from(samples: samples, timestamp: components.timestamp) {
             logger.debug("Successfully created histogram metric")
+            let baseName = key.components(separatedBy: "{").first ?? key
             let metric = Metric(
-                name: MetricFilter.getBaseName(key),
+                name: baseName,
                 type: .histogram,
                 help: components.help,
                 labels: components.labels,
