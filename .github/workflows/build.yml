@@ -1,0 +1,110 @@
+name: Build and Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build_and_test:
+    name: Build and Test
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+      
+      - name: Build
+        run: |
+          xcodebuild clean build \
+            -project locol.xcodeproj \
+            -scheme locol \
+            -destination 'platform=macOS' \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO
+      
+      - name: Test
+        run: |
+          xcodebuild test \
+            -project locol.xcodeproj \
+            -scheme locol \
+            -destination 'platform=macOS' \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO
+
+  package:
+    name: Package App
+    needs: build_and_test
+    runs-on: macos-14
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Certificates
+        if: github.ref == 'refs/heads/main'
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
+          MAC_DEV_CERTIFICATE_BASE64: ${{ secrets.MAC_DEV_CERTIFICATE_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.CERT_PASSWORD }}
+        run: |
+          # Create variables
+          BUILD_CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
+          MAC_DEV_CERTIFICATE_PATH=$RUNNER_TEMP/mac_dev_certificate.p12
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+
+          # Import certificates from secrets
+          echo -n "$BUILD_CERTIFICATE_BASE64" | base64 --decode -o $BUILD_CERTIFICATE_PATH
+          echo -n "$MAC_DEV_CERTIFICATE_BASE64" | base64 --decode -o $MAC_DEV_CERTIFICATE_PATH
+          
+          # Create temporary keychain
+          security create-keychain -p "temporary" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "temporary" $KEYCHAIN_PATH
+          
+          # Import certificates to keychain
+          security import $BUILD_CERTIFICATE_PATH -P "$CERT_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security import $MAC_DEV_CERTIFICATE_PATH -P "$CERT_PASSWORD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+
+      - name: Build App
+        run: |
+          xcodebuild archive \
+            -project locol.xcodeproj \
+            -scheme locol \
+            -archivePath $RUNNER_TEMP/locol.xcarchive \
+            -destination 'generic/platform=macOS'
+          
+          xcodebuild -exportArchive \
+            -archivePath $RUNNER_TEMP/locol.xcarchive \
+            -exportOptionsPlist ExportOptions.plist \
+            -exportPath $RUNNER_TEMP/export
+      
+      - name: Create DMG
+        run: |
+          npm install -g create-dmg
+          create-dmg $RUNNER_TEMP/export/locol.app $RUNNER_TEMP/
+          mv $RUNNER_TEMP/locol*.dmg $RUNNER_TEMP/locol.dmg
+      
+      - name: Notarize
+        if: github.ref == 'refs/heads/main'
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          TEAM_ID: ${{ secrets.TEAM_ID }}
+          APP_SPECIFIC_PASSWORD: ${{ secrets.APP_SPECIFIC_PASSWORD }}
+        run: |
+          xcrun notarytool submit $RUNNER_TEMP/locol.dmg \
+            --apple-id "$APPLE_ID" \
+            --password "$APP_SPECIFIC_PASSWORD" \
+            --team-id "$TEAM_ID" \
+            --wait
+          
+          xcrun stapler staple $RUNNER_TEMP/locol.dmg
+      
+      - name: Upload Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: locol.dmg
+          path: ${{ runner.temp }}/locol.dmg 
