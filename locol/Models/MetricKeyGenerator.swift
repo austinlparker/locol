@@ -12,18 +12,12 @@ class MetricKeyGenerator {
         
         // If no relevant labels, return the base name
         if relevantLabels.isEmpty {
-            logger.debug("Generated key for \(name) with no labels")
             return name
         }
         
         let sortedLabels = relevantLabels.sorted(by: { $0.key < $1.key })
         let labelString = sortedLabels.map { "\($0.key)=\"\($0.value)\"" }.joined(separator: ",")
         let key = "\(name){\(labelString)}"
-        
-        logger.debug("Generated key: \(key)")
-        logger.debug("- From name: \(name)")
-        logger.debug("- Original labels: \(labels)")
-        logger.debug("- Filtered labels: \(relevantLabels)")
         
         return key
     }

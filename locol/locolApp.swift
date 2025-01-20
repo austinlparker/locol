@@ -30,10 +30,9 @@ class AppTerminationHandler: ObservableObject {
     }
 }
 
-@main
-struct locolApp: App {
-    @StateObject private var collectorManager = CollectorManager()
-    @StateObject private var terminationHandler = AppTerminationHandler()
+private struct MenuBarView: View {
+    @ObservedObject var collectorManager: CollectorManager
+    @ObservedObject var terminationHandler: AppTerminationHandler
     @Environment(\.openWindow) private var openWindow
     
     private func activateWindow(withId id: String) {
@@ -48,12 +47,8 @@ struct locolApp: App {
         }
     }
     
-    init() {
-        terminationHandler.setup(collectorManager: collectorManager)
-    }
-    
-    var body: some Scene {
-        MenuBarExtra {
+    var body: some View {
+        Group {
             if collectorManager.collectors.isEmpty {
                 Text("No collectors configured")
                     .foregroundStyle(.secondary)
@@ -100,6 +95,34 @@ struct locolApp: App {
                 }
                 NSApplication.shared.terminate(nil)
             }
+        }
+        .onAppear {
+            terminationHandler.setup(collectorManager: collectorManager)
+        }
+    }
+}
+
+@main
+struct locolApp: App {
+    @StateObject private var collectorManager = CollectorManager()
+    @StateObject private var terminationHandler = AppTerminationHandler()
+    @Environment(\.openWindow) private var openWindow
+    
+    private func activateWindow(withId id: String) {
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        DispatchQueue.main.async {
+            NSApp.windows.forEach { window in
+                if window.identifier?.rawValue == id {
+                    window.makeKeyAndOrderFront(nil)
+                    window.orderFrontRegardless()
+                }
+            }
+        }
+    }
+    
+    var body: some Scene {
+        MenuBarExtra {
+            MenuBarView(collectorManager: collectorManager, terminationHandler: terminationHandler)
         } label: {
             Image("menubar-icon")
         }

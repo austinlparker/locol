@@ -31,7 +31,7 @@ class PrometheusParser {
     private typealias MetricTuple = (name: String, help: String?, type: MetricType?, values: [(labels: [String: String], value: Double)])
     
     static func parse(_ metricsString: String) throws -> [PrometheusMetric] {
-        logger.debug("Parsing metrics string of length: \(metricsString.count)")
+        logger.debug("Prometheus Parser: Parsing metrics string of length: \(metricsString.count)")
         
         let lines = metricsString.components(separatedBy: .newlines)
         var metrics: [PrometheusMetric] = []

@@ -64,84 +64,79 @@ class CollectorManager: ObservableObject {
         appState.collectors
     }
     
-    private func createCollectorDirectory(name: String, version: String) throws -> (binaryPath: String, configPath: String) {
-        let collectorDir = fileManager.baseDirectory.appendingPathComponent("collectors").appendingPathComponent(name)
-        let binPath = collectorDir.appendingPathComponent("bin")
-        let configPath = collectorDir.appendingPathComponent("config.yaml")
-        
-        do {
-            try FileManager.default.createDirectory(at: binPath, withIntermediateDirectories: true)
-            AppLogger.shared.debug("Created directory at \(binPath.path)")
-            return (binPath.path, configPath.path)
-        } catch {
-            AppLogger.shared.error("Failed to create directory at \(binPath.path): \(error.localizedDescription)")
-            throw error
-        }
-    }
-    
     func addCollector(name: String, version: String, release: Release, asset: ReleaseAsset) {
         isDownloading = true
         downloadStatus = "Creating collector directory..."
         downloadProgress = 0.0
         
-        // Create the directory first
+        // Create the directory and copy default config
         do {
-            _ = try createCollectorDirectory(name: name, version: version)
+            let (binaryPath, configPath) = try fileManager.createCollectorDirectory(name: name, version: version)
+            
+            // Load and write the default configuration from templates
+            guard let templateURL = Bundle.main.url(forResource: "default", withExtension: "yaml", subdirectory: "templates"),
+                  let defaultConfig = try? String(contentsOf: templateURL, encoding: .utf8) else {
+                throw NSError(domain: "io.aparker.locol", code: 1, userInfo: [
+                    NSLocalizedDescriptionKey: "Could not load default template"
+                ])
+            }
+            
+            try defaultConfig.write(to: URL(fileURLWithPath: configPath), atomically: true, encoding: .utf8)
+            
+            // Then download the asset
+            downloadStatus = "Downloading collector binary..."
+            downloadManager.downloadAsset(releaseAsset: asset, name: name, version: version, binaryPath: binaryPath, configPath: configPath) { [weak self] result in
+                guard let self = self else { return }
+                
+                switch result {
+                case .success((let binaryPath, let configPath)):
+                    let collector = CollectorInstance(
+                        name: name,
+                        version: version,
+                        binaryPath: binaryPath,
+                        configPath: configPath
+                    )
+                    self.appState.addCollector(collector)
+                    
+                    // Get component information
+                    Task {
+                        do {
+                            await MainActor.run {
+                                self.downloadStatus = "Getting component information..."
+                            }
+                            let components = try await self.processManager.getCollectorComponents(collector)
+                            await MainActor.run {
+                                var updatedCollector = collector
+                                updatedCollector.components = components
+                                self.appState.updateCollector(updatedCollector)
+                                self.isDownloading = false
+                                self.downloadProgress = 0.0
+                                self.downloadStatus = ""
+                            }
+                        } catch {
+                            AppLogger.shared.error("Failed to get collector components: \(error.localizedDescription)")
+                            await MainActor.run {
+                                self.isDownloading = false
+                                self.downloadProgress = 0.0
+                                self.downloadStatus = ""
+                            }
+                        }
+                    }
+                case .failure(let error):
+                    AppLogger.shared.error("Failed to download collector: \(error.localizedDescription)")
+                    // Clean up the directory on failure
+                    try? self.fileManager.deleteCollector(name: name)
+                    self.isDownloading = false
+                    self.downloadProgress = 0.0
+                    self.downloadStatus = ""
+                }
+            }
         } catch {
             AppLogger.shared.error("Failed to create collector directory: \(error.localizedDescription)")
             isDownloading = false
             downloadProgress = 0.0
             downloadStatus = ""
             return
-        }
-        
-        // Then download the asset
-        downloadStatus = "Downloading collector binary..."
-        downloadManager.downloadAsset(releaseAsset: asset, name: name, version: version) { [weak self] result in
-            guard let self = self else { return }
-            
-            switch result {
-            case .success((let binaryPath, let configPath)):
-                let collector = CollectorInstance(
-                    name: name,
-                    version: version,
-                    binaryPath: binaryPath,
-                    configPath: configPath
-                )
-                self.appState.addCollector(collector)
-                
-                // Get component information
-                Task {
-                    do {
-                        await MainActor.run {
-                            self.downloadStatus = "Getting component information..."
-                        }
-                        let components = try await self.processManager.getCollectorComponents(collector)
-                        await MainActor.run {
-                            var updatedCollector = collector
-                            updatedCollector.components = components
-                            self.appState.updateCollector(updatedCollector)
-                            self.isDownloading = false
-                            self.downloadProgress = 0.0
-                            self.downloadStatus = ""
-                        }
-                    } catch {
-                        AppLogger.shared.error("Failed to get collector components: \(error.localizedDescription)")
-                        await MainActor.run {
-                            self.isDownloading = false
-                            self.downloadProgress = 0.0
-                            self.downloadStatus = ""
-                        }
-                    }
-                }
-            case .failure(let error):
-                AppLogger.shared.error("Failed to download collector: \(error.localizedDescription)")
-                // Clean up the directory on failure
-                try? self.fileManager.deleteCollector(name: name)
-                self.isDownloading = false
-                self.downloadProgress = 0.0
-                self.downloadStatus = ""
-            }
         }
     }
     

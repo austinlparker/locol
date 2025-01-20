@@ -50,50 +50,43 @@ class ConfigSnippetManager: ObservableObject {
         if let resourcePath = Bundle.main.resourcePath {
             let resourceURL = URL(fileURLWithPath: resourcePath)
             logger.notice("Resource path: \(resourcePath, privacy: .public)")
-            do {
-                // We know the exact path structure now
-                let resourceDir = resourceURL
+            
+            // We know the exact path structure now
+            let resourceDir = resourceURL
+            
+            // Load snippets from each type's directory
+            for type in SnippetType.allCases {
+                var foundSnippets: [ConfigSnippet] = []
                 
-                // Load snippets from each type's directory
-                for type in SnippetType.allCases {
-                    var foundSnippets: [ConfigSnippet] = []
-                    
-                    let typeDir = resourceDir.appendingPathComponent(type.rawValue)
-                    logger.notice("Looking for snippets in \(typeDir.path, privacy: .public)")
-                    
-                    guard let contents = try? FileManager.default.contentsOfDirectory(at: typeDir, includingPropertiesForKeys: nil) else {
-                        logger.notice("No contents found in \(typeDir.path, privacy: .public)")
-                        continue
-                    }
-                    
-                    let yamlFiles = contents.filter { $0.pathExtension == "yaml" }
-                    logger.notice("Found \(yamlFiles.count) YAML files in \(typeDir.path, privacy: .public)")
-                    
-                    let snippetsForPath = try yamlFiles.compactMap { url -> ConfigSnippet? in
-                        let content = try String(contentsOf: url, encoding: .utf8)
-                        logger.notice("Loading snippet from \(url.path, privacy: .public)")
-                        
-                        // Try to parse and validate the snippet has content for this type
-                        if let yaml = try? Yams.load(yaml: content) as? [String: Any],
-                           yaml[type.rawValue] != nil {
-                            return ConfigSnippet(name: url.lastPathComponent, type: type, content: content)
-                        } else {
-                            logger.notice("Failed to parse YAML or missing \(type.rawValue) key in \(url.path, privacy: .public)")
-                        }
+                let typeDir = resourceDir.appendingPathComponent(type.rawValue)
+                logger.notice("Looking for snippets in \(typeDir.path, privacy: .public)")
+                
+                guard let contents = try? FileManager.default.contentsOfDirectory(at: typeDir, includingPropertiesForKeys: nil) else {
+                    logger.notice("No contents found in \(typeDir.path, privacy: .public)")
+                    continue
+                }
+                
+                let yamlFiles = contents.filter { $0.pathExtension == "yaml" }
+                logger.notice("Found \(yamlFiles.count) YAML files in \(typeDir.path, privacy: .public)")
+                
+                let snippetsForPath = yamlFiles.compactMap { url -> ConfigSnippet? in
+                    guard let content = try? String(contentsOf: url, encoding: .utf8),
+                          let yaml = try? Yams.load(yaml: content) as? [String: Any],
+                          yaml[type.rawValue] != nil else {
+                        logger.notice("Failed to parse YAML or missing \(type.rawValue) key in \(url.path, privacy: .public)")
                         return nil
                     }
-                    
-                    foundSnippets.append(contentsOf: snippetsForPath)
-                    
-                    if !foundSnippets.isEmpty {
-                        snippets[type] = foundSnippets
-                        logger.notice("Loaded \(foundSnippets.count) total snippets for \(type.rawValue, privacy: .public)")
-                    } else {
-                        logger.notice("No snippets found for \(type.rawValue, privacy: .public)")
-                    }
+                    return ConfigSnippet(name: url.lastPathComponent, type: type, content: content)
                 }
-            } catch {
-                logger.error("Failed to list contents: \(error.localizedDescription, privacy: .public)")
+                
+                foundSnippets.append(contentsOf: snippetsForPath)
+                
+                if !foundSnippets.isEmpty {
+                    snippets[type] = foundSnippets
+                    logger.notice("Loaded \(foundSnippets.count) total snippets for \(type.rawValue, privacy: .public)")
+                } else {
+                    logger.notice("No snippets found for \(type.rawValue, privacy: .public)")
+                }
             }
         } else {
             logger.error("Could not get resource path from bundle")
@@ -104,7 +97,7 @@ class ConfigSnippetManager: ObservableObject {
         do {
             let content = try String(contentsOfFile: path, encoding: .utf8)
             // Store the key order when loading the config
-            if let yaml = try Yams.compose(yaml: content) {
+            if let yaml = try? Yams.compose(yaml: content) {
                 updateKeyOrder(from: yaml, path: "root")
             }
             currentConfig = try Yams.load(yaml: content) as? [String: Any]
@@ -224,15 +217,16 @@ class ConfigSnippetManager: ObservableObject {
     }
     
     func previewSnippetMerge(_ snippet: ConfigSnippet, into config: [String: Any]) -> String {
+        guard let snippetConfig = snippet.parsedContent else {
+            return (try? formatConfig(config)) ?? ""
+        }
+        
         do {
-            if let snippetConfig = snippet.parsedContent {
-                let merged = try mergeConfigs(base: config, with: snippetConfig, typeKey: snippet.type.rawValue)
-                return try formatConfig(merged)
-            }
-            return try formatConfig(config)
+            let merged = try mergeConfigs(base: config, with: snippetConfig, typeKey: snippet.type.rawValue)
+            return (try? formatConfig(merged)) ?? ""
         } catch {
             logger.error("Failed to preview snippet merge: \(error.localizedDescription, privacy: .public)")
-            return try! formatConfig(config)  // Use original config on error
+            return (try? formatConfig(config)) ?? ""
         }
     }
     
@@ -240,19 +234,15 @@ class ConfigSnippetManager: ObservableObject {
         guard var config = currentConfig,
               let snippetConfig = snippet.parsedContent else { return }
         
-        config = try mergeConfigs(base: config, with: snippetConfig, typeKey: snippet.type.rawValue)
-        logger.info("Final key order state: \(self.keyOrder, privacy: .public)")
-        
-        currentConfig = config
-        previewConfig = try formatConfig(config)
-    }
-    
-    private func getPipelineType(for componentType: String) -> String? {
-        switch componentType {
-        case "receivers": return "receivers"
-        case "processors": return "processors"
-        case "exporters": return "exporters"
-        default: return nil
+        do {
+            config = try mergeConfigs(base: config, with: snippetConfig, typeKey: snippet.type.rawValue)
+            logger.info("Final key order state: \(self.keyOrder, privacy: .public)")
+            
+            currentConfig = config
+            previewConfig = (try? formatConfig(config)) ?? ""
+        } catch {
+            logger.error("Failed to merge snippet: \(error.localizedDescription, privacy: .public)")
+            throw error
         }
     }
     
@@ -266,7 +256,7 @@ class ConfigSnippetManager: ObservableObject {
                 for key in orderedKeys {
                     if let value = dict[key] {
                         let newPath = "\(path).\(key)"
-                        mappings.append((try Node(key), try convertToNode(value, path: newPath)))
+                        mappings.append((Node(key), try convertToNode(value, path: newPath)))
                     }
                 }
                 
@@ -275,20 +265,20 @@ class ConfigSnippetManager: ObservableObject {
                 for key in remainingKeys.sorted() {
                     if let value = dict[key] {
                         let newPath = "\(path).\(key)"
-                        mappings.append((try Node(key), try convertToNode(value, path: newPath)))
+                        mappings.append((Node(key), try convertToNode(value, path: newPath)))
                     }
                 }
                 
-                return try Node(mappings)
+                return Node(mappings)
             } else if let array = value as? [Any] {
                 var sequence = try Node(array.map { try convertToNode($0, path: "\(path)[]") })
-                // Only use flow style for arrays under 'service'
+                // Use flow style for arrays under 'service'
                 if path.contains(".service") || path.hasPrefix("service.") {
                     sequence.sequence?.style = .flow
                 }
                 return sequence
             } else if let string = value as? String {
-                return try Node(string)
+                return Node(string)
             } else if let number = value as? Int {
                 return try Node(number)
             } else if let bool = value as? Bool {
@@ -296,30 +286,10 @@ class ConfigSnippetManager: ObservableObject {
             } else if value is NSNull || String(describing: value) == "null" {
                 return try Node([:])
             }
-            return try Node(String(describing: value))
+            return Node(String(describing: value))
         }
         
         let node = try convertToNode(config)
         return try Yams.serialize(node: node, indent: 2, sortKeys: false)
-    }
-    
-    // Helper function to handle YAML parsing errors
-    private func parseYAML(_ content: String) throws -> [String: Any]? {
-        do {
-            return try Yams.load(yaml: content) as? [String: Any]
-        } catch {
-            logger.error("Failed to parse YAML: \(error.localizedDescription, privacy: .public)")
-            throw error
-        }
-    }
-    
-    // Helper function to handle YAML serialization errors
-    private func serializeYAML(_ node: Node) throws -> String {
-        do {
-            return try Yams.serialize(node: node, indent: 2, sortKeys: false)
-        } catch {
-            logger.error("Failed to serialize YAML: \(error.localizedDescription, privacy: .public)")
-            throw error
-        }
     }
 } 
