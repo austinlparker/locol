@@ -6,6 +6,25 @@ struct CounterSeries {
     let metrics: [Metric]
     let labels: [String: String]
     let currentRate: Double
+    let rates: [(timestamp: Date, rate: Double)]
+    
+    init(name: String, metrics: [Metric], labels: [String: String], currentRate: Double) {
+        self.name = name
+        self.metrics = metrics
+        self.labels = labels
+        self.currentRate = currentRate
+        
+        // Precompute rates for all points
+        var computedRates: [(timestamp: Date, rate: Double)] = []
+        for i in 0..<metrics.count - 1 {
+            let current = CounterData(timestamp: metrics[i].timestamp, value: metrics[i].value, labels: metrics[i].labels)
+            let next = CounterData(timestamp: metrics[i + 1].timestamp, value: metrics[i + 1].value, labels: metrics[i + 1].labels)
+            if let rate = next.calculateRate(previous: current) {
+                computedRates.append((timestamp: current.timestamp, rate: rate))
+            }
+        }
+        self.rates = computedRates
+    }
 }
 
 class MetricsViewModel: ObservableObject {

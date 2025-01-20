@@ -118,3 +118,52 @@ struct LabelDisplay: View {
         }
     }
 }
+
+// MARK: - Chart Helpers
+
+enum ChartColors {
+    private static let colors: [Color] = [
+        .blue,
+        .orange,
+        .green,
+        .red,
+        .purple,
+        .yellow,
+        .teal,
+        .pink
+    ]
+    
+    static func color(for seriesName: String) -> Color {
+        // Extract the processor value from the series name
+        let start = seriesName.firstIndex(of: "=")!
+        let end = seriesName.firstIndex(of: "}")!
+        let processor = String(seriesName[seriesName.index(after: start)..<end])
+        
+        // Map common processor names to specific colors
+        switch processor {
+        case "batch": return .blue
+        case "stream": return .orange
+        case "filter": return .green
+        default:
+            // Fallback to hash-based color for unknown processors
+            let colorIndex = abs(processor.hashValue) % colors.count
+            return colors[colorIndex]
+        }
+    }
+}
+
+struct SeriesPoint: Identifiable {
+    let id: String
+    let series: CounterSeries
+    let rate: Double
+    
+    var color: Color {
+        ChartColors.color(for: series.name)
+    }
+    
+    init(series: CounterSeries, rate: Double) {
+        self.id = series.name
+        self.series = series
+        self.rate = rate
+    }
+}

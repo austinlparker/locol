@@ -35,3 +35,11 @@ xcuserdata/
 
 .cursorrules
 *.profraw
+.env
+
+# Build
+*.xcarchive
+
+# Environment
+.env.*
+!.env.example

@@ -4,7 +4,7 @@ import Charts
 struct CounterCard: View {
     let name: String
     let series: [CounterSeries]
-    @State private var selectedPoint: (timestamp: Date, rates: [(series: CounterSeries, rate: Double)])? = nil
+    @State private var selectedPoint: (timestamp: Date, points: [SeriesPoint])? = nil
     
     var body: some View {
         GroupBox {
@@ -24,7 +24,7 @@ struct CounterCard: View {
 
 private struct RateChart: View {
     let series: [CounterSeries]
-    @Binding var selectedPoint: (timestamp: Date, rates: [(series: CounterSeries, rate: Double)])?
+    @Binding var selectedPoint: (timestamp: Date, points: [SeriesPoint])?
     
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -34,17 +34,14 @@ private struct RateChart: View {
             
             VStack(alignment: .leading, spacing: 4) {
                 Chart {
-                    ForEach(series, id: \.name) { series in
-                        ForEach(series.metrics.indices.dropLast(), id: \.self) { index in
-                            let current = series.metrics[index]
-                            let next = series.metrics[index + 1]
-                            let rate = (next.value - current.value) / next.timestamp.timeIntervalSince(current.timestamp)
-                            
+                    ForEach(series, id: \.name) { (series: CounterSeries) in
+                        ForEach(series.rates, id: \.timestamp) { point in
                             LineMark(
-                                x: .value("Time", current.timestamp),
-                                y: .value("Rate", rate)
+                                x: .value("Time", point.timestamp),
+                                y: .value("Rate", point.rate)
                             )
-                            .foregroundStyle(by: .value("Series", series.labels.formattedPrimaryLabels()))
+                            .foregroundStyle(by: .value("Series", series.name))
+                            .lineStyle(StrokeStyle(lineWidth: 2))
                         }
                     }
                     
@@ -96,18 +93,15 @@ private struct RateChart: View {
                                     
                                     guard let timestamp = proxy.value(atX: x) as Date? else { return }
                                     
-                                    var rates: [(series: CounterSeries, rate: Double)] = []
+                                    var points: [SeriesPoint] = []
                                     for series in series {
-                                        if let index = series.metrics.firstIndex(where: { $0.timestamp >= timestamp }),
-                                           index > 0 {
-                                            let current = series.metrics[index - 1]
-                                            let next = series.metrics[index]
-                                            let rate = (next.value - current.value) / next.timestamp.timeIntervalSince(current.timestamp)
-                                            rates.append((series: series, rate: rate))
+                                        // Find the closest rate point
+                                        if let closestPoint = series.rates.min(by: { abs($0.timestamp.timeIntervalSince(timestamp)) < abs($1.timestamp.timeIntervalSince(timestamp)) }) {
+                                            points.append(SeriesPoint(series: series, rate: closestPoint.rate))
                                         }
                                     }
                                     
-                                    selectedPoint = (timestamp: timestamp, rates: rates)
+                                    selectedPoint = (timestamp: timestamp, points: points)
                                     
                                 case .ended:
                                     selectedPoint = nil
@@ -118,31 +112,36 @@ private struct RateChart: View {
                 
                 // Legend or Tooltip area with fixed height
                 if let selectedPoint = selectedPoint {
-                    ChartTooltip(timestamp: selectedPoint.timestamp, rates: selectedPoint.rates)
+                    ChartTooltip(timestamp: selectedPoint.timestamp, points: selectedPoint.points)
                 } else {
                     ChartLegend(series: series)
                 }
             }
         }
+        .chartForegroundStyleScale([
+            "processed_items{processor=batch}": ChartColors.color(for: "processed_items{processor=batch}"),
+            "processed_items{processor=stream}": ChartColors.color(for: "processed_items{processor=stream}"),
+            "processed_items{processor=filter}": ChartColors.color(for: "processed_items{processor=filter}")
+        ])
     }
 }
 
 private struct ChartTooltip: View {
     let timestamp: Date
-    let rates: [(series: CounterSeries, rate: Double)]
+    let points: [SeriesPoint]
     
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text(timestamp.formatted(.dateTime.hour().minute().second()))
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            ForEach(rates, id: \.series.name) { item in
+            ForEach(points) { (point: SeriesPoint) in
                 HStack(spacing: 8) {
                     Circle()
-                        .fill(Color.blue)
+                        .fill(point.color)
                         .frame(width: 8, height: 8)
-                    LabelDisplay(labels: item.series.labels, showAll: false, showOnlyPrimary: true)
-                    Text((item.series.metrics.first?.formatValueWithInferredUnit(item.rate))! + "/s")
+                    LabelDisplay(labels: point.series.labels, showAll: false, showOnlyPrimary: true)
+                    Text((point.series.metrics.first?.formatValueWithInferredUnit(point.rate))! + "/s")
                         .font(.caption.bold())
                 }
             }
@@ -164,10 +163,10 @@ private struct ChartLegend: View {
     
     var body: some View {
         HStack(spacing: 16) {
-            ForEach(series, id: \.name) { series in
+            ForEach(series, id: \.name) { (series: CounterSeries) in
                 HStack(spacing: 8) {
                     Circle()
-                        .fill(Color.blue)
+                        .fill(ChartColors.color(for: series.name))
                         .frame(width: 8, height: 8)
                     LabelDisplay(labels: series.labels, showAll: false)
                     Text((series.metrics.first?.formatValueWithInferredUnit(series.currentRate))! + "/s")
@@ -182,78 +181,121 @@ private struct ChartLegend: View {
 }
 
 #Preview {
-    CounterCard(
-        name: "Test Counter",
+    let now = Date()
+    let batchMetrics = [
+        Metric(
+            name: "processed_items",
+            type: .counter,
+            help: "Number of items processed",
+            labels: ["processor": "batch"],
+            timestamp: now.addingTimeInterval(-60),
+            value: 0,
+            histogram: nil
+        ),
+        Metric(
+            name: "processed_items",
+            type: .counter,
+            help: "Number of items processed",
+            labels: ["processor": "batch"],
+            timestamp: now.addingTimeInterval(-30),
+            value: 50,
+            histogram: nil
+        ),
+        Metric(
+            name: "processed_items",
+            type: .counter,
+            help: "Number of items processed",
+            labels: ["processor": "batch"],
+            timestamp: now,
+            value: 100,
+            histogram: nil
+        )
+    ]
+    
+    let streamMetrics = [
+        Metric(
+            name: "processed_items",
+            type: .counter,
+            help: "Number of items processed",
+            labels: ["processor": "stream"],
+            timestamp: now.addingTimeInterval(-60),
+            value: 0,
+            histogram: nil
+        ),
+        Metric(
+            name: "processed_items",
+            type: .counter,
+            help: "Number of items processed",
+            labels: ["processor": "stream"],
+            timestamp: now.addingTimeInterval(-30),
+            value: 125,
+            histogram: nil
+        ),
+        Metric(
+            name: "processed_items",
+            type: .counter,
+            help: "Number of items processed",
+            labels: ["processor": "stream"],
+            timestamp: now,
+            value: 250,
+            histogram: nil
+        )
+    ]
+    
+    let filterMetrics = [
+        Metric(
+            name: "processed_items",
+            type: .counter,
+            help: "Number of items processed",
+            labels: ["processor": "filter"],
+            timestamp: now.addingTimeInterval(-60),
+            value: 0,
+            histogram: nil
+        ),
+        Metric(
+            name: "processed_items",
+            type: .counter,
+            help: "Number of items processed",
+            labels: ["processor": "filter"],
+            timestamp: now.addingTimeInterval(-30),
+            value: 37,
+            histogram: nil
+        ),
+        Metric(
+            name: "processed_items",
+            type: .counter,
+            help: "Number of items processed",
+            labels: ["processor": "filter"],
+            timestamp: now,
+            value: 75,
+            histogram: nil
+        )
+    ]
+    
+    return CounterCard(
+        name: "Processed Items",
         series: [
             CounterSeries(
-                name: "test_counter{label=value1}",
-                metrics: [
-                    Metric(
-                        name: "test_counter",
-                        type: .counter,
-                        help: "Test counter metric",
-                        labels: ["label": "value1"],
-                        timestamp: Date().addingTimeInterval(-60),
-                        value: 0,
-                        histogram: nil
-                    ),
-                    Metric(
-                        name: "test_counter",
-                        type: .counter,
-                        help: "Test counter metric",
-                        labels: ["label": "value1"],
-                        timestamp: Date().addingTimeInterval(-30),
-                        value: 50,
-                        histogram: nil
-                    ),
-                    Metric(
-                        name: "test_counter",
-                        type: .counter,
-                        help: "Test counter metric",
-                        labels: ["label": "value1"],
-                        timestamp: Date(),
-                        value: 100,
-                        histogram: nil
-                    )
-                ],
-                labels: ["label": "value1"],
+                name: "processed_items{processor=batch}",
+                metrics: batchMetrics,
+                labels: ["processor": "batch"],
                 currentRate: 1.67
             ),
             CounterSeries(
-                name: "test_counter{label=value2}",
-                metrics: [
-                    Metric(
-                        name: "test_counter",
-                        type: .counter,
-                        help: "Test counter metric",
-                        labels: ["label": "value2"],
-                        timestamp: Date().addingTimeInterval(-60),
-                        value: 0,
-                        histogram: nil
-                    ),
-                    Metric(
-                        name: "test_counter",
-                        type: .counter,
-                        help: "Test counter metric",
-                        labels: ["label": "value2"],
-                        timestamp: Date().addingTimeInterval(-30),
-                        value: 25,
-                        histogram: nil
-                    ),
-                    Metric(
-                        name: "test_counter",
-                        type: .counter,
-                        help: "Test counter metric",
-                        labels: ["label": "value2"],
-                        timestamp: Date(),
-                        value: 50,
-                        histogram: nil
-                    )
-                ],
-                labels: ["label": "value2"],
-                currentRate: 0.83
+                name: "processed_items{processor=stream}",
+                metrics: streamMetrics,
+                labels: ["processor": "stream"],
+                currentRate: 4.17
+            ),
+            CounterSeries(
+                name: "processed_items{processor=filter}",
+                metrics: filterMetrics,
+                labels: ["processor": "filter"],
+                currentRate: 1.25
             )
         ]
     )
+    .frame(width: 800)
+    .padding()
 } 
 
