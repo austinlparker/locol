@@ -2,25 +2,36 @@ import SwiftUI
 
 struct AddCollectorSheet: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @ObservedObject var manager: CollectorManager
     @Binding var name: String
     @Binding var selectedRelease: Release?
     @State private var selectedAsset: ReleaseAsset?
     @FocusState private var isNameFieldFocused: Bool
     
+    private var idealWidth: CGFloat {
+        horizontalSizeClass == .compact ? 300 : 500
+    }
+    
     var body: some View {
         VStack(spacing: 16) {
             if manager.isDownloading {
-                VStack(spacing: 8) {
+                ProgressView {
                     Text(manager.downloadStatus)
                         .font(.body)
                         .foregroundStyle(.secondary)
-                    ProgressView(value: manager.downloadProgress)
-                        .progressViewStyle(.linear)
-                        .controlSize(.large)
+                }
+                .progressViewStyle(.linear)
+                .controlSize(.large)
+                .padding()
+            } else if manager.isLoadingReleases {
+                VStack(spacing: 8) {
+                    ProgressView()
+                    Text("Fetching available versions...")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
                 }
                 .padding()
-                .frame(width: 300)
             } else {
                 Form {
                     Section {
@@ -39,23 +50,36 @@ struct AddCollectorSheet: View {
                             .font(.headline)
                     }
                     
-                    Section {
-                        ReleaseSelectionView(
-                            releases: manager.availableReleases,
-                            selectedAssetId: selectedAsset?.id,
-                            onAssetSelected: { release, asset in
-                                selectedAsset = asset
-                                selectedRelease = release
+                    if manager.availableReleases.isEmpty {
+                        Section {
+                            ContentUnavailableView {
+                                Label("No Versions Available", systemImage: "exclamationmark.triangle")
+                            } description: {
+                                Text("Try refreshing the list")
+                            } actions: {
+                                Button("Refresh") {
+                                    manager.getCollectorReleases(repo: "opentelemetry-collector-releases", forceRefresh: true)
+                                }
                             }
-                        )
-                    } header: {
-                        Text("Version")
-                            .font(.headline)
+                        }
+                    } else {
+                        Section {
+                            ReleaseSelectionView(
+                                releases: manager.availableReleases,
+                                selectedAssetId: selectedAsset?.id,
+                                onAssetSelected: { release, asset in
+                                    selectedAsset = asset
+                                    selectedRelease = release
+                                }
+                            )
+                        } header: {
+                            Text("Version")
+                                .font(.headline)
+                        }
                     }
                 }
                 .formStyle(.grouped)
                 .scrollContentBackground(.hidden)
-                .frame(width: 500)
             }
             
             // Footer with buttons
@@ -83,10 +107,12 @@ struct AddCollectorSheet: View {
             .padding(.horizontal)
         }
         .padding(.vertical)
-        .frame(width: manager.isDownloading ? 300 : 500)
-        .fixedSize()
+        .frame(minWidth: idealWidth, maxWidth: 600)
         .onAppear {
             isNameFieldFocused = true
+            if manager.availableReleases.isEmpty {
+                manager.getCollectorReleases(repo: "opentelemetry-collector-releases")
+            }
         }
         .onChange(of: manager.isDownloading) { oldValue, newValue in
             if !newValue {

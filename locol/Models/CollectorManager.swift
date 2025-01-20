@@ -10,6 +10,7 @@ import Combine
 
 class CollectorManager: ObservableObject {
     @Published private(set) var isDownloading: Bool = false
+    @Published private(set) var isLoadingReleases: Bool = false
     @Published var downloadProgress: Double = 0.0
     @Published var downloadStatus: String = ""
     @Published private(set) var activeCollector: CollectorInstance? = nil
@@ -242,7 +243,13 @@ class CollectorManager: ObservableObject {
     }
     
     func getCollectorReleases(repo: String, forceRefresh: Bool = false, completion: @escaping () -> Void = {}) {
-        releaseManager.getCollectorReleases(repo: repo, forceRefresh: forceRefresh, completion: completion)
+        isLoadingReleases = true
+        releaseManager.getCollectorReleases(repo: repo, forceRefresh: forceRefresh) { [weak self] in
+            DispatchQueue.main.async {
+                self?.isLoadingReleases = false
+                completion()
+            }
+        }
     }
     
     func listConfigTemplates() -> [URL] {

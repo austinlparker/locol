@@ -177,6 +177,7 @@ struct AddCollectorView: View {
                 }
             }
         }
-        .frame(width: 600, height: 500)
+        .frame(minWidth: 400, idealWidth: 600, maxWidth: .infinity, 
+               minHeight: 300, idealHeight: 500, maxHeight: .infinity)
     }
 } 
