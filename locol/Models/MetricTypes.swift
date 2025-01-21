@@ -118,7 +118,8 @@ struct HistogramMetric {
             guard !bucket.upperBound.isInfinite else { return nil }
             
             let lowerBound = index > 0 ? buckets[index - 1].upperBound : 0
-            let bucketValue = index > 0 ? bucket.count - buckets[index - 1].count : bucket.count
+            let previousCount = index > 0 ? buckets[index - 1].count : 0
+            let bucketValue = bucket.count - previousCount
             let percentage = count > 0 ? (bucketValue / count) * 100 : 0
             
             return Bucket(

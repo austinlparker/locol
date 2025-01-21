@@ -26,11 +26,6 @@ private struct BucketChart: View {
     let histogram: HistogramMetric
     @Binding var selectedPoint: (bucket: HistogramMetric.Bucket, count: Int)?
     
-    private func getBucketCount(_ bucket: HistogramMetric.Bucket, index: Int) -> Double {
-        let previousCount = index > 0 ? histogram.nonInfiniteBuckets[index - 1].count : 0
-        return bucket.count - previousCount
-    }
-    
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Text("Distribution")
@@ -39,20 +34,17 @@ private struct BucketChart: View {
             
             ChartContainer {
                 Chart {
-                    ForEach(Array(histogram.nonInfiniteBuckets.enumerated()), id: \.element.id) { index, bucket in
-                        let bucketCount = getBucketCount(bucket, index: index)
+                    ForEach(histogram.nonInfiniteBuckets, id: \.id) { bucket in
                         BarMark(
-                            x: .value("Bucket", index),
-                            y: .value("Count", bucketCount)
+                            x: .value("Bucket", bucket.id),
+                            y: .value("Count", bucket.bucketValue)
                         )
-                        .foregroundStyle(bucketCount > 0 ? Color.blue : Color.blue.opacity(0.1))
+                        .foregroundStyle(bucket.bucketValue > 0 ? Color.blue : Color.blue.opacity(0.1))
                     }
                     
                     if let selectedPoint = selectedPoint {
-                        if let index = histogram.nonInfiniteBuckets.firstIndex(where: { $0.id == selectedPoint.bucket.id }) {
-                            RuleMark(x: .value("Selected", index))
-                                .foregroundStyle(.gray.opacity(0.3))
-                        }
+                        RuleMark(x: .value("Selected", selectedPoint.bucket.id))
+                            .foregroundStyle(.gray.opacity(0.3))
                     }
                 }
                 .chartXAxis {
@@ -102,8 +94,7 @@ private struct BucketChart: View {
                                         return
                                     }
                                     
-                                    let bucketCount = Int(getBucketCount(bucket, index: bucketIndex))
-                                    selectedPoint = (bucket: bucket, count: bucketCount)
+                                    selectedPoint = (bucket: bucket, count: Int(bucket.bucketValue))
                                     
                                 case .ended:
                                     selectedPoint = nil
@@ -117,8 +108,7 @@ private struct BucketChart: View {
                     BaseTooltip {
                         VStack(alignment: .leading, spacing: 4) {
                             if let index = histogram.nonInfiniteBuckets.firstIndex(where: { $0.id == selectedPoint.bucket.id }) {
-                                let lowerBound = index > 0 ? histogram.nonInfiniteBuckets[index - 1].upperBound : 0
-                                Text("\(formatBucketLabel(lowerBound)) - \(formatBucketLabel(selectedPoint.bucket.upperBound))")
+                                Text("\(formatBucketLabel(selectedPoint.bucket.lowerBound)) - \(formatBucketLabel(selectedPoint.bucket.upperBound))")
                                     .font(.caption)
                             }
                             HStack(spacing: 8) {
@@ -126,7 +116,7 @@ private struct BucketChart: View {
                                     color: .blue,
                                     label: "\(selectedPoint.count) samples"
                                 )
-                                Text("(\(Int((Double(selectedPoint.count) / histogram.totalCount) * 100))%)")
+                                Text("(\(Int(selectedPoint.bucket.percentage))%)")
                                     .foregroundStyle(.secondary)
                                     .font(.caption)
                             }

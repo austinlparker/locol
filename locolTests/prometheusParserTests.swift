@@ -34,12 +34,20 @@ final class PrometheusParserTests: XCTestCase {
         let input = """
         # HELP http_request_duration_seconds Request duration histogram
         # TYPE http_request_duration_seconds histogram
-        http_request_duration_seconds_bucket{le="0.1"} 1
-        http_request_duration_seconds_bucket{le="0.5"} 4
-        http_request_duration_seconds_bucket{le="1.0"} 5
-        http_request_duration_seconds_bucket{le="+Inf"} 6
-        http_request_duration_seconds_sum 8.35
-        http_request_duration_seconds_count 6
+        http_request_duration_seconds_bucket{le="0.005"} 2
+        http_request_duration_seconds_bucket{le="0.01"} 4
+        http_request_duration_seconds_bucket{le="0.025"} 7
+        http_request_duration_seconds_bucket{le="0.05"} 11
+        http_request_duration_seconds_bucket{le="0.1"} 15
+        http_request_duration_seconds_bucket{le="0.25"} 18
+        http_request_duration_seconds_bucket{le="0.5"} 20
+        http_request_duration_seconds_bucket{le="1"} 22
+        http_request_duration_seconds_bucket{le="2.5"} 24
+        http_request_duration_seconds_bucket{le="5"} 25
+        http_request_duration_seconds_bucket{le="10"} 26
+        http_request_duration_seconds_bucket{le="+Inf"} 27
+        http_request_duration_seconds_sum 23.47
+        http_request_duration_seconds_count 27
         """
         
         let metrics = try PrometheusParser.parse(input)
@@ -47,29 +55,46 @@ final class PrometheusParserTests: XCTestCase {
         XCTAssertEqual(metrics.count, 1)
         let metric = metrics[0]
         XCTAssertEqual(metric.name, "http_request_duration_seconds")
+        XCTAssertEqual(metric.help, "Request duration histogram")
         XCTAssertEqual(metric.type, .histogram)
         
-        // Verify histogram components
+        // Verify all histogram components are present
         let buckets = metric.values.filter { $0.labels["le"] != nil }
-        XCTAssertEqual(buckets.count, 4, "Should have 4 buckets")
+        XCTAssertEqual(buckets.count, 12, "Should have 12 buckets")
         
-        // Verify bucket values
         let sortedBuckets = buckets.sorted { 
             let le1 = Double($0.labels["le"]!.replacingOccurrences(of: "+Inf", with: "inf")) ?? 0
             let le2 = Double($1.labels["le"]!.replacingOccurrences(of: "+Inf", with: "inf")) ?? 0
             return le1 < le2
         }
-        XCTAssertEqual(sortedBuckets[0].value, 1, "First bucket should have count 1")
-        XCTAssertEqual(sortedBuckets[1].value, 4, "Second bucket should have count 4")
-        XCTAssertEqual(sortedBuckets[2].value, 5, "Third bucket should have count 5")
-        XCTAssertEqual(sortedBuckets[3].value, 6, "Fourth bucket should have count 6")
         
-        // Verify sum and count
-        let sum = metric.values.first { $0.labels.isEmpty && metric.name.hasSuffix("_sum") }
-        XCTAssertEqual(sum?.value, 8.35, "Sum should be 8.35")
+        // Test a few key bucket values
+        XCTAssertEqual(sortedBuckets[0].value, 2, "0.005 bucket should have count 2")
+        XCTAssertEqual(sortedBuckets[4].value, 15, "0.1 bucket should have count 15")
+        XCTAssertEqual(sortedBuckets[11].value, 27, "+Inf bucket should have count 27")
         
-        let count = metric.values.first { $0.labels.isEmpty && metric.name.hasSuffix("_count") }
-        XCTAssertEqual(count?.value, 6, "Count should be 6")
+        // Verify bucket values are monotonically increasing
+        for i in 1..<sortedBuckets.count {
+            XCTAssertGreaterThanOrEqual(
+                sortedBuckets[i].value,
+                sortedBuckets[i-1].value,
+                "Bucket values must be monotonically increasing"
+            )
+        }
+        
+        // Verify sum and count values
+        let sumValue = metric.values.first(where: { 
+            $0.labels["__name__"] == "http_request_duration_seconds_sum" 
+        })
+        XCTAssertNotNil(sumValue, "Sum should be present")
+        XCTAssertEqual(sumValue?.value, 23.47, "Sum should be 23.47")
+        
+        let countValue = metric.values.first(where: { 
+            $0.labels["__name__"] == "http_request_duration_seconds_count" 
+        })
+        XCTAssertNotNil(countValue, "Count should be present")
+        XCTAssertEqual(countValue?.value, 27, "Count should match highest bucket value")
+        XCTAssertEqual(countValue?.value, sortedBuckets.last?.value, "Count should match +Inf bucket")
     }
     
     func testInvalidMetricName() {
@@ -88,11 +113,11 @@ final class PrometheusParserTests: XCTestCase {
         let input = """
         # HELP valid_metric Valid metric
         # TYPE valid_metric counter
-        valid_metric{label=} 10
+        valid_metric{label="value",} 10
         """
         
         XCTAssertThrowsError(try PrometheusParser.parse(input)) { error in
-            XCTAssertEqual(error as? MetricError, .malformedMetricLine("valid_metric{label=} 10"))
+            XCTAssertEqual(error as? MetricError, .malformedMetricLine("valid_metric{label=\"value\",} 10"))
         }
     }
     
