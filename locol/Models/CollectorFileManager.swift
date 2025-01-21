@@ -1,10 +1,12 @@
 import Foundation
 
-class CollectorFileManager {
+public class CollectorFileManager {
+    static let shared = CollectorFileManager()
+    
     let baseDirectory: URL
     let templatesDirectory: URL
     
-    init() {
+    public init() {
         self.baseDirectory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".locol")
         self.templatesDirectory = Bundle.main.resourceURL?.appendingPathComponent("templates") ?? baseDirectory.appendingPathComponent("templates")
         
@@ -14,6 +16,7 @@ class CollectorFileManager {
     private func createDirectoryStructure() throws {
         // Create base directories
         try FileManager.default.createDirectory(at: baseDirectory.appendingPathComponent("collectors"), withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: baseDirectory.appendingPathComponent("bin"), withIntermediateDirectories: true)
         
         // Copy default templates if they don't exist
         if let defaultConfig = Bundle.main.url(forResource: "defaultConfig", withExtension: "yaml", subdirectory: "templates") {
@@ -125,6 +128,12 @@ class CollectorFileManager {
         if FileManager.default.fileExists(atPath: collectorDir.path) {
             try FileManager.default.removeItem(at: collectorDir)
         }
+    }
+    
+    var dataGeneratorPath: URL {
+        baseDirectory
+            .appendingPathComponent("bin")
+            .appendingPathComponent("otelgen")
     }
 }
 

@@ -61,6 +61,7 @@ struct AddCollectorSheet: View {
                                     manager.getCollectorReleases(repo: "opentelemetry-collector-releases", forceRefresh: true)
                                 }
                             }
+                            .padding()
                         }
                     } else {
                         Section {
@@ -79,7 +80,7 @@ struct AddCollectorSheet: View {
                     }
                 }
                 .formStyle(.grouped)
-                .scrollContentBackground(.hidden)
+                .frame(maxHeight: 500)
             }
             
             // Footer with buttons
@@ -107,7 +108,8 @@ struct AddCollectorSheet: View {
             .padding(.horizontal)
         }
         .padding(.vertical)
-        .frame(minWidth: idealWidth, maxWidth: 600)
+        .frame(width: idealWidth)
+        .fixedSize(horizontal: true, vertical: false)
         .onAppear {
             isNameFieldFocused = true
             if manager.availableReleases.isEmpty {

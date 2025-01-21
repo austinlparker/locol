@@ -88,6 +88,14 @@ private struct MenuBarView: View {
             
             Divider()
             
+            Button("Send Data") {
+                NSApplication.shared.activate(ignoringOtherApps: true)
+                openWindow(id: "DataGeneratorWindow")
+                activateWindow(withId: "DataGeneratorWindow")
+            }
+
+            Divider()
+            
             Button("Quit") {
                 // Stop all collectors before quitting
                 for collector in collectorManager.collectors where collector.isRunning {
@@ -106,6 +114,7 @@ private struct MenuBarView: View {
 struct locolApp: App {
     @StateObject private var collectorManager = CollectorManager()
     @StateObject private var terminationHandler = AppTerminationHandler()
+    @StateObject private var dataGeneratorManager = DataGeneratorManager.shared
     @Environment(\.openWindow) private var openWindow
     
     private func activateWindow(withId id: String) {
@@ -157,5 +166,10 @@ struct locolApp: App {
             }
         }
         .defaultSize(width: 1000, height: 700)
+        
+        Window("Send Data", id: "DataGeneratorWindow") {
+            DataGeneratorView(manager: dataGeneratorManager)
+        }
+        .defaultSize(width: 600, height: 800)
     }
 }
