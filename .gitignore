@@ -43,3 +43,6 @@ xcuserdata/
 # Environment
 .env.*
 !.env.example
+*.dmg
+*.app
+*.zip
