@@ -20,6 +20,18 @@ struct GaugeCard: View {
     @State private var selectedValue: (timestamp: Date, value: Double)? = nil
     @State private var visualization: GaugeVisualization = .lineChart
     
+    private var seriesName: String {
+        // Create a series name in the format "{key=value}" using the first label
+        if let (key, value) = metrics[0].labels.first {
+            return "{\(key)=\(value)}"
+        }
+        return "{unnamed}"
+    }
+    
+    private var seriesColor: Color {
+        ChartColors.color(for: seriesName)
+    }
+    
     var body: some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 8) {
@@ -30,11 +42,11 @@ struct GaugeCard: View {
                 // Chart
                 switch visualization {
                 case .number:
-                    NumberView(value: metrics.last?.value ?? 0, metric: metrics[0])
+                    NumberView(value: metrics.last?.value ?? 0, metric: metrics[0], color: seriesColor)
                 case .radial:
-                    RadialView(value: metrics.last?.value ?? 0, metric: metrics[0])
+                    RadialView(value: metrics.last?.value ?? 0, metric: metrics[0], color: seriesColor)
                 case .lineChart:
-                    LineChartView(metrics: metrics, selectedValue: $selectedValue)
+                    LineChartView(metrics: metrics, selectedValue: $selectedValue, seriesName: seriesName)
                 }
             }
             .padding()
@@ -45,6 +57,15 @@ struct GaugeCard: View {
 private struct LineChartView: View {
     let metrics: [Metric]
     @Binding var selectedValue: (timestamp: Date, value: Double)?
+    let seriesName: String
+    
+    private var seriesColor: Color {
+        ChartColors.color(for: seriesName)
+    }
+    
+    private var currentValue: Double {
+        metrics.last?.value ?? 0
+    }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -52,14 +73,14 @@ private struct LineChartView: View {
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
             
-            VStack(alignment: .leading, spacing: 4) {
+            ChartContainer {
                 Chart {
                     ForEach(metrics, id: \.timestamp) { metric in
                         LineMark(
                             x: .value("Time", metric.timestamp),
                             y: .value("Value", metric.value)
                         )
-                        .foregroundStyle(Color.blue)
+                        .foregroundStyle(seriesColor)
                     }
                     
                     if let selectedValue = selectedValue {
@@ -85,12 +106,6 @@ private struct LineChartView: View {
                         AxisTick()
                     }
                 }
-                .chartLegend(.hidden)
-                .chartPlotStyle { plotArea in
-                    plotArea
-                        .background(.background.opacity(0.5))
-                        .border(.quaternary)
-                }
                 .chartOverlay { proxy in
                     GeometryReader { geometry in
                         Rectangle()
@@ -106,10 +121,14 @@ private struct LineChartView: View {
                                         return
                                     }
                                     
-                                    guard let timestamp = proxy.value(atX: x) as Date?,
-                                          let value = proxy.value(atX: x, as: Double.self) else { return }
+                                    guard let timestamp = proxy.value(atX: x) as Date? else { return }
                                     
-                                    selectedValue = (timestamp: timestamp, value: value)
+                                    // Find the closest metric point to the hovered timestamp
+                                    if let closestMetric = metrics.min(by: {
+                                        abs($0.timestamp.timeIntervalSince(timestamp)) < abs($1.timestamp.timeIntervalSince(timestamp))
+                                    }) {
+                                        selectedValue = (timestamp: closestMetric.timestamp, value: closestMetric.value)
+                                    }
                                     
                                 case .ended:
                                     selectedValue = nil
@@ -120,68 +139,38 @@ private struct LineChartView: View {
                 
                 // Legend or Tooltip area with fixed height
                 if let selectedValue = selectedValue {
-                    ChartTooltip(timestamp: selectedValue.timestamp, value: selectedValue.value, metric: metrics[0])
+                    BaseTooltip {
+                        VStack(alignment: .leading, spacing: 4) {
+                            TimeLabel(timestamp: selectedValue.timestamp)
+                            HStack(spacing: 8) {
+                                MetricLegendItem(
+                                    color: seriesColor,
+                                    label: metrics[0].formatValueWithInferredUnit(selectedValue.value)
+                                )
+                                LabelDisplay(labels: metrics[0].labels, showAll: false, showOnlyPrimary: true)
+                            }
+                        }
+                    }
                 } else {
-                    ChartLegend(value: metrics.last?.value ?? 0, metric: metrics[0])
+                    BaseTooltip {
+                        HStack(spacing: 8) {
+                            MetricLegendItem(
+                                color: seriesColor,
+                                label: "Current: \(metrics[0].formatValueWithInferredUnit(currentValue))"
+                            )
+                            LabelDisplay(labels: metrics[0].labels, showAll: false)
+                        }
+                    }
                 }
             }
         }
     }
 }
 
-private struct ChartTooltip: View {
-    let timestamp: Date
-    let value: Double
-    let metric: Metric
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(timestamp.formatted(.dateTime.hour().minute().second()))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            HStack(spacing: 8) {
-                Circle()
-                    .fill(Color.blue)
-                    .frame(width: 8, height: 8)
-                LabelDisplay(labels: metric.labels, showAll: false, showOnlyPrimary: true)
-                Text(metric.formatValueWithInferredUnit(value))
-                    .font(.caption.bold())
-            }
-        }
-        .padding(.vertical, 6)
-        .padding(.horizontal, 8)
-        .background {
-            RoundedRectangle(cornerRadius: 8)
-                .fill(.background)
-                .shadow(radius: 2)
-        }
-        .frame(height: 28)
-        .frame(maxWidth: .infinity, alignment: .center)
-    }
-}
-
-private struct ChartLegend: View {
-    let value: Double
-    let metric: Metric
-    
-    var body: some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(Color.blue)
-                .frame(width: 8, height: 8)
-            LabelDisplay(labels: metric.labels, showAll: false)
-            Text(metric.formatValueWithInferredUnit(value))
-                .font(.caption.bold())
-        }
-        .padding(.vertical, 6)
-        .frame(height: 28)
-        .frame(maxWidth: .infinity)
-    }
-}
-
 private struct NumberView: View {
     let value: Double
     let metric: Metric
+    let color: Color
     
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -190,7 +179,7 @@ private struct NumberView: View {
                 .foregroundStyle(.secondary)
             Text(metric.formatValueWithInferredUnit(value))
                 .font(.system(.largeTitle, design: .rounded))
-                .foregroundStyle(.primary)
+                .foregroundStyle(color)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, 24)
@@ -200,6 +189,7 @@ private struct NumberView: View {
 private struct RadialView: View {
     let value: Double
     let metric: Metric
+    let color: Color
     
     var body: some View {
         VStack(alignment: .center, spacing: 8) {
@@ -210,6 +200,7 @@ private struct RadialView: View {
                     .font(.system(.headline, design: .rounded))
             }
             .gaugeStyle(.accessoryCircularCapacity)
+            .tint(color)
             .scaleEffect(2.5)
             .frame(height: 120)
         }
@@ -218,25 +209,21 @@ private struct RadialView: View {
     }
 }
 
-#if DEBUG
-struct GaugeCard_Previews: PreviewProvider {
-    static var previews: some View {
-        let now = Date()
-        let metrics = (0..<10).map { i in
-            Metric(
-                name: "Test Gauge",
-                type: .gauge,
-                help: "help text",
-                labels: ["component": "memory", "type": "usage"],
-                timestamp: now.addingTimeInterval(TimeInterval(i * 60)),
-                value: Double.random(in: 50...80),
-                histogram: nil
-            )
-        }
-        
-        return GaugeCard(metrics: metrics)
-            .frame(width: 400)
-            .padding()
+#Preview {
+    let now = Date()
+    let metrics = (0..<10).map { i in
+        Metric(
+            name: "Test Gauge",
+            type: .gauge,
+            help: "help text",
+            labels: ["component": "memory", "type": "usage"],
+            timestamp: now.addingTimeInterval(TimeInterval(i * 60)),
+            value: Double.random(in: 50...80),
+            histogram: nil
+        )
     }
-} 
-#endif
+    
+    return GaugeCard(metrics: metrics)
+        .frame(width: 400)
+        .padding()
+}

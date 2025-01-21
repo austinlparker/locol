@@ -260,7 +260,7 @@ struct ConfigEditorView: View {
         assets: [mockAsset]
     )
     
-    try? mockManager.addCollector(
+    mockManager.addCollector(
         name: "Mock Collector",
         version: mockRelease.tagName,
         release: mockRelease,

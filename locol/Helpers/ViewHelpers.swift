@@ -1,4 +1,5 @@
 import SwiftUI
+import Charts
 
 // MARK: - Shared Components
 
@@ -15,6 +16,74 @@ struct StatBox: View {
                 .font(.callout)
                 .fontWeight(.medium)
         }
+    }
+}
+
+// MARK: - Chart Components
+
+struct ChartContainer<Content: View>: View {
+    let content: Content
+    
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            content
+        }
+        .chartLegend(.hidden)
+        .chartPlotStyle { plotArea in
+            plotArea
+                .background(.background.opacity(0.5))
+                .border(.quaternary)
+        }
+    }
+}
+
+struct BaseTooltip<Content: View>: View {
+    let content: Content
+    
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
+    
+    var body: some View {
+        content
+            .padding(.vertical, 6)
+            .padding(.horizontal, 8)
+            .background {
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(.background)
+                    .shadow(radius: 2)
+            }
+            .frame(height: 28)
+            .frame(maxWidth: .infinity, alignment: .center)
+    }
+}
+
+struct MetricLegendItem: View {
+    let color: Color
+    let label: String
+    
+    var body: some View {
+        HStack(spacing: 8) {
+            Circle()
+                .fill(color)
+                .frame(width: 8, height: 8)
+            Text(label)
+                .font(.caption.bold())
+        }
+    }
+}
+
+struct TimeLabel: View {
+    let timestamp: Date
+    
+    var body: some View {
+        Text(timestamp.formatted(.dateTime.hour().minute().second()))
+            .font(.caption)
+            .foregroundStyle(.secondary)
     }
 }
 
@@ -119,7 +188,7 @@ struct LabelDisplay: View {
     }
 }
 
-// MARK: - Chart Helpers
+// MARK: - Chart Colors
 
 enum ChartColors {
     private static let colors: [Color] = [
@@ -134,36 +203,37 @@ enum ChartColors {
     ]
     
     static func color(for seriesName: String) -> Color {
-        // Extract the processor value from the series name
-        let start = seriesName.firstIndex(of: "=")!
-        let end = seriesName.firstIndex(of: "}")!
-        let processor = String(seriesName[seriesName.index(after: start)..<end])
-        
-        // Map common processor names to specific colors
-        switch processor {
-        case "batch": return .blue
-        case "stream": return .orange
-        case "filter": return .green
-        default:
-            // Fallback to hash-based color for unknown processors
-            let colorIndex = abs(processor.hashValue) % colors.count
-            return colors[colorIndex]
+        // If the series name is in {key=value} format
+        if let start = seriesName.firstIndex(of: "="),
+           let end = seriesName.firstIndex(of: "}") {
+            let processor = String(seriesName[seriesName.index(after: start)..<end])
+            
+            // Map common processor names to specific colors
+            switch processor {
+            case "batch": return .blue
+            case "stream": return .orange
+            case "filter": return .green
+            default:
+                // Fallback to hash-based color for unknown processors
+                let colorIndex = abs(processor.hashValue) % colors.count
+                return colors[colorIndex]
+            }
         }
-    }
-}
-
-struct SeriesPoint: Identifiable {
-    let id: String
-    let series: CounterSeries
-    let rate: Double
-    
-    var color: Color {
-        ChartColors.color(for: series.name)
-    }
-    
-    init(series: CounterSeries, rate: Double) {
-        self.id = series.name
-        self.series = series
-        self.rate = rate
+        
+        // For other formats, extract meaningful parts from the name
+        let components = seriesName.split(separator: "_")
+        if components.contains("exporter") {
+            return .blue
+        } else if components.contains("processor") {
+            return .orange
+        } else if components.contains("receiver") {
+            return .green
+        } else if components.contains("scraper") {
+            return .purple
+        }
+        
+        // Fallback to hash-based color
+        let colorIndex = abs(seriesName.hashValue) % colors.count
+        return colors[colorIndex]
     }
 }

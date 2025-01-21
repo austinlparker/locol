@@ -107,6 +107,7 @@ struct HistogramMetric {
     let labels: [String: String]
     
     var average: Double { sum / count }
+    var totalCount: Double { count }  // Alias for count to match Prometheus terminology
     
     var p50: Double { quantile(0.5) }
     var p95: Double { quantile(0.95) }
@@ -174,44 +175,49 @@ struct HistogramMetric {
         return bucket.count - previousCount
     }
     
-    /// Calculate any quantile (0-1) from the histogram buckets
+    /// Calculate any quantile (0-1) from the histogram buckets using Prometheus's algorithm
+    /// See: https://github.com/prometheus/prometheus/blob/main/promql/quantile.go
     func quantile(_ q: Double) -> Double {
         guard q >= 0 && q <= 1 else { return 0 }
         guard !buckets.isEmpty else { return 0 }
         
-        let target = count * q
-        var prevCount = 0.0
-        var prevBound = 0.0
+        let sortedBuckets = buckets.sorted()
         
-        for bucket in buckets.sorted() {
-            if bucket.count >= target {
-                // Linear interpolation between bucket boundaries
-                let countDelta = bucket.count - prevCount
-                if countDelta > 0 {
-                    let fraction = (target - prevCount) / countDelta
-                    
-                    // If this is the infinity bucket, use the previous bound
-                    if bucket.upperBound.isInfinite {
-                        return prevBound
-                    }
-                    
-                    // Linear interpolation between bucket boundaries
-                    if prevCount == 0 {
-                        // For the first bucket, interpolate from 0
-                        return bucket.upperBound * fraction
-                    }
-                    
-                    let scale = (bucket.upperBound - prevBound)
-                    return prevBound + scale * fraction
-                }
-                return bucket.upperBound
-            }
-            prevCount = bucket.count
-            prevBound = bucket.upperBound
+        // Handle edge cases
+        if q <= 0 {
+            return 0
+        }
+        if q >= 1 {
+            return sortedBuckets.dropLast().last?.upperBound ?? 0
         }
         
-        // If we get here, return the highest finite bucket's upper bound
-        return buckets.sorted().dropLast().last?.upperBound ?? 0
+        // Find the bucket containing our target rank
+        var rank = 0.0
+        for (i, bucket) in sortedBuckets.enumerated() {
+            if bucket.upperBound.isInfinite {
+                continue
+            }
+            
+            let nextRank = bucket.count / count
+            if nextRank >= q {
+                // Found the bucket containing our quantile
+                let prevCount = i > 0 ? sortedBuckets[i-1].count : 0
+                let prevRank = prevCount / count
+                let prevBound = i > 0 ? sortedBuckets[i-1].upperBound : 0
+                
+                // Use linear interpolation between bucket boundaries
+                if bucket.count == prevCount {
+                    return bucket.upperBound
+                }
+                
+                let bucketRank = (q - prevRank) / (nextRank - prevRank)
+                return prevBound + (bucket.upperBound - prevBound) * bucketRank
+            }
+            rank = nextRank
+        }
+        
+        // If we get here, return the highest finite bucket
+        return sortedBuckets.dropLast().last?.upperBound ?? 0
     }
     
     /// Infer the unit type from a metric name and format the value accordingly
@@ -326,5 +332,16 @@ struct HistogramMetric {
     func bucketAtIndex(_ index: Int) -> Bucket? {
         guard index >= 0 && index < nonInfiniteBuckets.count else { return nil }
         return nonInfiniteBuckets[index]
+    }
+    
+    func findBucketIndex(forQuantile q: Double) -> Int {
+        var rank = 0.0
+        for (i, bucket) in nonInfiniteBuckets.enumerated() {
+            rank += bucket.count / Double(totalCount)
+            if rank >= q {
+                return i
+            }
+        }
+        return nonInfiniteBuckets.count - 1
     }
 }

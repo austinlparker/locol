@@ -4,7 +4,7 @@ import Charts
 struct CounterCard: View {
     let name: String
     let series: [CounterSeries]
-    @State private var selectedPoint: (timestamp: Date, points: [SeriesPoint])? = nil
+    @State private var selectedPoint: (timestamp: Date, points: [MetricPoint])? = nil
     
     var body: some View {
         GroupBox {
@@ -24,24 +24,69 @@ struct CounterCard: View {
 
 private struct RateChart: View {
     let series: [CounterSeries]
-    @Binding var selectedPoint: (timestamp: Date, points: [SeriesPoint])?
+    @Binding var selectedPoint: (timestamp: Date, points: [MetricPoint])?
+    
+    // Window size for rate calculation (in seconds)
+    private let windowSize: TimeInterval = 60
+    
+    private var windowText: String {
+        if windowSize >= 60 {
+            return "\(Int(windowSize/60))m"
+        } else {
+            return "\(Int(windowSize))s"
+        }
+    }
+    
+    private func calculateSmoothRate(metrics: [Metric], at timestamp: Date) -> Double? {
+        // Find metrics within our window
+        let windowStart = timestamp.addingTimeInterval(-windowSize)
+        let windowMetrics = metrics.filter { $0.timestamp >= windowStart && $0.timestamp <= timestamp }
+            .sorted { $0.timestamp < $1.timestamp }
+        
+        guard windowMetrics.count >= 2,
+              let first = windowMetrics.first,
+              let last = windowMetrics.last else {
+            return nil
+        }
+        
+        let timeDelta = last.timestamp.timeIntervalSince(first.timestamp)
+        guard timeDelta > 0 else { return nil }
+        
+        return (last.value - first.value) / timeDelta
+    }
     
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text("Rate Over Time")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+            HStack(alignment: .center, spacing: 8) {
+                Text("Rate Over Time")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                
+                Text(windowText)
+                    .font(.caption)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(.secondary.opacity(0.2))
+                    .clipShape(RoundedRectangle(cornerRadius: 4))
+            }
             
-            VStack(alignment: .leading, spacing: 4) {
+            ChartContainer {
                 Chart {
-                    ForEach(series, id: \.name) { (series: CounterSeries) in
-                        ForEach(series.rates, id: \.timestamp) { point in
-                            LineMark(
-                                x: .value("Time", point.timestamp),
-                                y: .value("Rate", point.rate)
-                            )
-                            .foregroundStyle(by: .value("Series", series.name))
-                            .lineStyle(StrokeStyle(lineWidth: 2))
+                    ForEach(series, id: \.name) { series in
+                        // Plot smoothed rates for each metric timestamp
+                        ForEach(series.metrics.indices, id: \.self) { i in
+                            if let rate = calculateSmoothRate(
+                                metrics: series.metrics,
+                                at: series.metrics[i].timestamp
+                            ) {
+                                LineMark(
+                                    x: .value("Time", series.metrics[i].timestamp),
+                                    y: .value("Rate", rate)
+                                )
+                                .foregroundStyle(by: .value("Series", series.name))
+                                .lineStyle(StrokeStyle(lineWidth: 2))
+                                .interpolationMethod(.monotone)
+                            }
                         }
                     }
                     
@@ -59,22 +104,15 @@ private struct RateChart: View {
                 }
                 .chartYAxis {
                     AxisMarks { value in
-                        if let val = value.as(Double.self),
-                           let firstMetric = series.first?.metrics.first {
+                        if let val = value.as(Double.self) {
                             AxisValueLabel {
-                                Text(firstMetric.formatValueWithInferredUnit(val) + "/s")
+                                Text(formatRate(val))
                                     .font(.caption)
                             }
                         }
                         AxisGridLine()
                         AxisTick()
                     }
-                }
-                .chartLegend(.hidden)
-                .chartPlotStyle { plotArea in
-                    plotArea
-                        .background(.background.opacity(0.5))
-                        .border(.quaternary)
                 }
                 .chartOverlay { proxy in
                     GeometryReader { geometry in
@@ -93,11 +131,14 @@ private struct RateChart: View {
                                     
                                     guard let timestamp = proxy.value(atX: x) as Date? else { return }
                                     
-                                    var points: [SeriesPoint] = []
+                                    var points: [MetricPoint] = []
                                     for series in series {
-                                        // Find the closest rate point
-                                        if let closestPoint = series.rates.min(by: { abs($0.timestamp.timeIntervalSince(timestamp)) < abs($1.timestamp.timeIntervalSince(timestamp)) }) {
-                                            points.append(SeriesPoint(series: series, rate: closestPoint.rate))
+                                        if let rate = calculateSmoothRate(metrics: series.metrics, at: timestamp) {
+                                            points.append(MetricPoint(
+                                                series: series,
+                                                value: rate,
+                                                timestamp: timestamp
+                                            ))
                                         }
                                     }
                                     
@@ -112,71 +153,69 @@ private struct RateChart: View {
                 
                 // Legend or Tooltip area with fixed height
                 if let selectedPoint = selectedPoint {
-                    ChartTooltip(timestamp: selectedPoint.timestamp, points: selectedPoint.points)
+                    BaseTooltip {
+                        VStack(alignment: .leading, spacing: 4) {
+                            TimeLabel(timestamp: selectedPoint.timestamp)
+                            ForEach(selectedPoint.points) { point in
+                                HStack(spacing: 8) {
+                                    MetricLegendItem(
+                                        color: point.color,
+                                        label: formatRate(point.value)
+                                    )
+                                    LabelDisplay(labels: point.series.labels, showAll: false, showOnlyPrimary: true)
+                                }
+                            }
+                        }
+                    }
                 } else {
-                    ChartLegend(series: series)
+                    BaseTooltip {
+                        HStack(spacing: 16) {
+                            ForEach(series, id: \.name) { series in
+                                HStack(spacing: 8) {
+                                    MetricLegendItem(
+                                        color: ChartColors.color(for: series.name),
+                                        label: formatRate(series.rateInfo.rate)
+                                    )
+                                    LabelDisplay(labels: series.labels, showAll: false)
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
-        .chartForegroundStyleScale([
-            "processed_items{processor=batch}": ChartColors.color(for: "processed_items{processor=batch}"),
-            "processed_items{processor=stream}": ChartColors.color(for: "processed_items{processor=stream}"),
-            "processed_items{processor=filter}": ChartColors.color(for: "processed_items{processor=filter}")
-        ])
+    }
+    
+    private func formatRate(_ rate: Double) -> String {
+        if rate >= 1_000_000 {
+            return String(format: "%.1fM/s", rate / 1_000_000)
+        } else if rate >= 1_000 {
+            return String(format: "%.1fK/s", rate / 1_000)
+        } else if rate >= 100 {
+            return String(format: "%.0f/s", rate)
+        } else if rate >= 10 {
+            return String(format: "%.1f/s", rate)
+        } else {
+            return String(format: "%.2f/s", rate)
+        }
     }
 }
 
-private struct ChartTooltip: View {
+struct MetricPoint: Identifiable {
+    let id: String
+    let series: CounterSeries
+    let value: Double
     let timestamp: Date
-    let points: [SeriesPoint]
     
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(timestamp.formatted(.dateTime.hour().minute().second()))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            ForEach(points) { (point: SeriesPoint) in
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(point.color)
-                        .frame(width: 8, height: 8)
-                    LabelDisplay(labels: point.series.labels, showAll: false, showOnlyPrimary: true)
-                    Text((point.series.metrics.first?.formatValueWithInferredUnit(point.rate))! + "/s")
-                        .font(.caption.bold())
-                }
-            }
-        }
-        .padding(.vertical, 6)
-        .padding(.horizontal, 8)
-        .background {
-            RoundedRectangle(cornerRadius: 8)
-                .fill(.background)
-                .shadow(radius: 2)
-        }
-        .frame(height: 28)
-        .frame(maxWidth: .infinity, alignment: .center)
+    var color: Color {
+        ChartColors.color(for: series.name)
     }
-}
-
-private struct ChartLegend: View {
-    let series: [CounterSeries]
     
-    var body: some View {
-        HStack(spacing: 16) {
-            ForEach(series, id: \.name) { (series: CounterSeries) in
-                HStack(spacing: 8) {
-                    Circle()
-                        .fill(ChartColors.color(for: series.name))
-                        .frame(width: 8, height: 8)
-                    LabelDisplay(labels: series.labels, showAll: false)
-                    Text((series.metrics.first?.formatValueWithInferredUnit(series.currentRate))! + "/s")
-                        .font(.caption.bold())
-                }
-            }
-        }
-        .padding(.vertical, 6)
-        .frame(height: 28)
-        .frame(maxWidth: .infinity)
+    init(series: CounterSeries, value: Double, timestamp: Date) {
+        self.id = series.name
+        self.series = series
+        self.value = value
+        self.timestamp = timestamp
     }
 }
 
@@ -242,60 +281,36 @@ private struct ChartLegend: View {
         )
     ]
     
-    let filterMetrics = [
-        Metric(
-            name: "processed_items",
-            type: .counter,
-            help: "Number of items processed",
-            labels: ["processor": "filter"],
-            timestamp: now.addingTimeInterval(-60),
-            value: 0,
-            histogram: nil
-        ),
-        Metric(
-            name: "processed_items",
-            type: .counter,
-            help: "Number of items processed",
-            labels: ["processor": "filter"],
-            timestamp: now.addingTimeInterval(-30),
-            value: 37,
-            histogram: nil
-        ),
-        Metric(
-            name: "processed_items",
-            type: .counter,
-            help: "Number of items processed",
-            labels: ["processor": "filter"],
-            timestamp: now,
-            value: 75,
-            histogram: nil
+    let batchSeries = CounterSeries(
+        name: "{processor=batch}",
+        metrics: batchMetrics,
+        labels: ["processor": "batch"],
+        rateInfo: MetricsManager.RateInfo(
+            rate: 1.67, // 100 items / 60 seconds
+            timeWindow: 60,
+            firstTimestamp: now.addingTimeInterval(-60),
+            lastTimestamp: now,
+            firstValue: 0,
+            lastValue: 100
         )
-    ]
-    
-    return CounterCard(
-        name: "Processed Items",
-        series: [
-            CounterSeries(
-                name: "processed_items{processor=batch}",
-                metrics: batchMetrics,
-                labels: ["processor": "batch"],
-                currentRate: 1.67
-            ),
-            CounterSeries(
-                name: "processed_items{processor=stream}",
-                metrics: streamMetrics,
-                labels: ["processor": "stream"],
-                currentRate: 4.17
-            ),
-            CounterSeries(
-                name: "processed_items{processor=filter}",
-                metrics: filterMetrics,
-                labels: ["processor": "filter"],
-                currentRate: 1.25
-            )
-        ]
     )
-    .frame(width: 800)
-    .padding()
+    
+    let streamSeries = CounterSeries(
+        name: "{processor=stream}",
+        metrics: streamMetrics,
+        labels: ["processor": "stream"],
+        rateInfo: MetricsManager.RateInfo(
+            rate: 4.17, // 250 items / 60 seconds
+            timeWindow: 60,
+            firstTimestamp: now.addingTimeInterval(-60),
+            lastTimestamp: now,
+            firstValue: 0,
+            lastValue: 250
+        )
+    )
+    
+    return CounterCard(name: "Processed Items", series: [batchSeries, streamSeries])
+        .frame(width: 400)
+        .padding()
 } 
 
