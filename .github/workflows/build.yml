@@ -9,7 +9,7 @@ on:
 jobs:
   build_and_test:
     name: Build and Test
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       
@@ -37,7 +37,7 @@ jobs:
   package:
     name: Package App
     needs: build_and_test
-    runs-on: macos-14
+    runs-on: macos-15
     if: github.ref == 'refs/heads/main'
     
     steps:
