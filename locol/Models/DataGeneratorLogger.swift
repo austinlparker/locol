@@ -1,19 +1,25 @@
 import Foundation
 
-class DataGeneratorLogger: ObservableObject {
+class DataGeneratorLogger: HighVolumeLogger {
     static let shared = DataGeneratorLogger()
     
-    @Published private(set) var logs: [LogEntry] = []
-    
-    func log(_ message: String, level: LogLevel = .info) {
-        DispatchQueue.main.async {
-            self.logs.append(LogEntry(timestamp: Date(), level: level, message: message))
-        }
+    private init() {
+        super.init(capacity: 1000, source: .generator("default"))
     }
     
-    func clearLogs() {
-        DispatchQueue.main.async {
-            self.logs.removeAll()
-        }
+    func log(_ message: String, level: LogLevel = .info) {
+        log(level, message)
+    }
+    
+    override func debug(_ message: String) {
+        log(.debug, message)
+    }
+    
+    override func info(_ message: String) {
+        log(.info, message)
+    }
+    
+    override func error(_ message: String) {
+        log(.error, message)
     }
 } 

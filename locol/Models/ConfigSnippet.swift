@@ -1,5 +1,6 @@
 import Foundation
 import Yams
+import os
 
 enum SnippetType: String, CaseIterable {
     case receivers
@@ -29,7 +30,7 @@ struct ConfigSnippet: Identifiable, Hashable {
                 self.parsedContent = yaml
             }
         } catch {
-            AppLogger.shared.error("Failed to parse YAML content for snippet \(name): \(error.localizedDescription)")
+            Logger.app.error("Failed to parse YAML content for snippet \(name): \(error.localizedDescription)")
         }
     }
     

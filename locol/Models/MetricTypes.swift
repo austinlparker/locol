@@ -82,7 +82,7 @@ struct Metric: Identifiable {
 }
 
 struct HistogramMetric {
-    private static let logger = Logger(subsystem: "io.aparker.locol", category: "HistogramMetric")
+    private static let logger = Logger.app
     
     struct Bucket: Identifiable, Comparable {
         let id: Int

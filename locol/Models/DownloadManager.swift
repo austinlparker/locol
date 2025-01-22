@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDelegate {
     @Published var downloadProgress: Double = 0.0
@@ -25,7 +26,7 @@ class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDelegate {
         let downloadTask = session.downloadTask(with: url) { [weak self] tempLocalURL, _, error in
             guard let self = self else { return }
             if let error = error {
-                AppLogger.shared.error("Download failed: \(error.localizedDescription)")
+                self.handleError(error)
                 DispatchQueue.main.async {
                     self.downloadStatus = "Download failed: \(error.localizedDescription)"
                     completion(.failure(error))
@@ -35,7 +36,7 @@ class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDelegate {
             
             guard let tempLocalURL = tempLocalURL else {
                 let error = NSError(domain: "DownloadError", code: 0, userInfo: [NSLocalizedDescriptionKey: "No file URL received"])
-                AppLogger.shared.error("No file URL received.")
+                Logger.app.error("No file URL received.")
                 DispatchQueue.main.async {
                     self.downloadStatus = "No file URL received."
                     completion(.failure(error))
@@ -63,7 +64,7 @@ class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDelegate {
                     completion(.success((binaryPath, configPath)))
                 }
             } catch {
-                AppLogger.shared.error("Error during extraction or moving: \(error.localizedDescription)")
+                self.handleError(error)
                 DispatchQueue.main.async {
                     self.downloadStatus = "Error during extraction: \(error.localizedDescription)"
                     completion(.failure(error))
@@ -86,5 +87,9 @@ class DownloadManager: NSObject, ObservableObject, URLSessionDownloadDelegate {
         DispatchQueue.main.async {
             self.downloadStatus = "Download complete. Processing..."
         }
+    }
+    
+    private func handleError(_ error: Error) {
+        Logger.app.error("Download failed: \(error.localizedDescription)")
     }
 } 

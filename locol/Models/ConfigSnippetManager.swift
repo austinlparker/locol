@@ -11,7 +11,7 @@ class ConfigSnippetManager: ObservableObject {
     // Track the order of keys at each level of the YAML
     private var keyOrder: [String: [String]] = [:]
     private let fileManager = FileManager.default
-    private let logger = Logger(subsystem: "io.aparker.locol", category: "snippets")
+    private let logger = Logger.app
     
     let defaultTemplate = """
     receivers:

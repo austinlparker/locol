@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 struct DataGeneratorConfig: Codable, Identifiable {
     var id = UUID()
@@ -332,11 +333,11 @@ class DataGeneratorManager: ObservableObject {
     func downloadGenerator() async throws {
         // Add cleanup before checking if binary exists
         if FileManager.default.fileExists(atPath: fileManager.dataGeneratorPath.path) {
-            AppLogger.shared.info("Removing existing binary before download")
+            Logger.app.info("Removing existing binary before download")
             try? FileManager.default.removeItem(at: fileManager.dataGeneratorPath)
         }
         
-        AppLogger.shared.info("Starting data generator download")
+        Logger.app.info("Starting data generator download")
         await MainActor.run {
             isDownloading = true
             status = "Fetching latest release..."
@@ -354,11 +355,11 @@ class DataGeneratorManager: ObservableObject {
         guard let asset = release.assets.first(where: { 
             $0.name.contains("darwin") && $0.name.contains(architecture)
         }) else {
-            AppLogger.shared.error("No compatible binary found for darwin/\(self.architecture)")
+            Logger.app.error("No compatible binary found for darwin/\(self.architecture)")
             throw DownloadError.noCompatibleBinary
         }
         
-        AppLogger.shared.info("Found compatible binary: \(asset.name)")
+        Logger.app.info("Found compatible binary: \(asset.name)")
         
         await MainActor.run {
             status = "Downloading otelgen binary..."
@@ -372,11 +373,11 @@ class DataGeneratorManager: ObservableObject {
         let (binaryData, _) = try await URLSession.shared.data(from: URL(string: asset.browserDownloadUrl)!)
         try binaryData.write(to: tempFile)
         
-        AppLogger.shared.info("Downloaded archive to \(tempFile.path)")
+        Logger.app.info("Downloaded archive to \(tempFile.path)")
         
         // Extract to a temporary directory
         let extractedPath = try fileManager.extractTarGz(at: tempFile)
-        AppLogger.shared.info("Extracted to \(extractedPath.path)")
+        Logger.app.info("Extracted to \(extractedPath.path)")
         
         // List contents of extracted directory
         do {
@@ -384,7 +385,7 @@ class DataGeneratorManager: ObservableObject {
                 at: extractedPath,
                 includingPropertiesForKeys: nil
             )
-            AppLogger.shared.info("Extracted contents: \(contents)")
+            Logger.app.info("Extracted contents: \(contents)")
             
             // List contents of the subdirectory
             if let subdir = contents.first(where: { $0.lastPathComponent.contains("otelgen_darwin") }) {
@@ -392,10 +393,10 @@ class DataGeneratorManager: ObservableObject {
                     at: subdir,
                     includingPropertiesForKeys: nil
                 )
-                AppLogger.shared.info("Subdirectory contents: \(subdirContents)")
+                Logger.app.info("Subdirectory contents: \(subdirContents)")
             }
         } catch {
-            AppLogger.shared.error("Failed to list directory contents: \(error)")
+            Logger.app.error("Failed to list directory contents: \(error)")
         }
         
         // The binary is inside a subdirectory with the same name as the tar.gz (without extension)
@@ -405,7 +406,7 @@ class DataGeneratorManager: ObservableObject {
             .appendingPathComponent("otelgen")
             .path
         
-        AppLogger.shared.info("Looking for binary at \(binaryPath)")
+        Logger.app.info("Looking for binary at \(binaryPath)")
         
         guard FileManager.default.fileExists(atPath: binaryPath) else {
             throw DownloadError.extractedBinaryNotFound
@@ -426,7 +427,7 @@ class DataGeneratorManager: ObservableObject {
             toPath: fileManager.dataGeneratorPath.path
         )
         
-        AppLogger.shared.info("Moved binary to final location: \(self.fileManager.dataGeneratorPath.path)")
+        Logger.app.info("Moved binary to final location: \(self.fileManager.dataGeneratorPath.path)")
         
         // Ensure the binary is executable
         try FileManager.default.setAttributes(
@@ -446,7 +447,7 @@ class DataGeneratorManager: ObservableObject {
     
     func startGenerator() {
         guard !isRunning else {
-            AppLogger.shared.warning("Attempted to start generator while already running")
+            Logger.app.warning("Attempted to start generator while already running")
             return
         }
         
@@ -454,7 +455,7 @@ class DataGeneratorManager: ObservableObject {
         
         // Check if binary exists and is executable
         guard FileManager.default.fileExists(atPath: binary) else {
-            AppLogger.shared.error("Data generator binary not found at \(binary)")
+            Logger.app.error("Data generator binary not found at \(binary)")
             status = "Error: Data generator binary not found"
             needsDownload = true
             return
@@ -462,7 +463,7 @@ class DataGeneratorManager: ObservableObject {
         
         let arguments = config.toArguments()
         
-        AppLogger.shared.info("Starting data generator with arguments: \(arguments)")
+        Logger.app.info("Starting data generator with arguments: \(arguments)")
         
         do {
             try processManager.start(
@@ -471,28 +472,34 @@ class DataGeneratorManager: ObservableObject {
                 outputHandler: { [weak self] output in
                     guard let self = self else { return }
                     self.status = output
-                    self.logger.log(output)
+                    self.logger.info(output)
+                },
+                onTermination: { [weak self] in
+                    guard let self = self else { return }
+                    self.isRunning = false
+                    self.status = "Generator stopped"
+                    Logger.app.info("Data generator terminated")
                 }
             )
             
             isRunning = true
-            AppLogger.shared.info("Data generator started successfully")
+            Logger.app.info("Data generator started successfully")
         } catch {
-            AppLogger.shared.error("Failed to start data generator: \(error.localizedDescription)")
+            Logger.app.error("Failed to start data generator: \(error.localizedDescription)")
             self.status = "Failed to start generator: \(error.localizedDescription)"
         }
     }
     
     func stopGenerator() {
         guard isRunning else {
-            AppLogger.shared.warning("Attempted to stop generator while not running")
+            Logger.app.warning("Attempted to stop generator while not running")
             return
         }
         
         processManager.stop()
         isRunning = false
         status = "Generator stopped"
-        AppLogger.shared.info("Data generator stopped")
+        Logger.app.info("Data generator stopped")
     }
     
     func cleanup() {

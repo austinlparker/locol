@@ -4,6 +4,11 @@ struct LogViewer: View {
     let collector: CollectorInstance
     @ObservedObject var logger = CollectorLogger.shared
     @State private var shouldAutoScroll = true
+    @State private var lastLogCount = 0
+    
+    var filteredLogs: [LogEntry] {
+        Array(logger.logs.filter { $0.message.contains("[\(collector.name)]") })
+    }
     
     var body: some View {
         VStack {
@@ -23,7 +28,7 @@ struct LogViewer: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading) {
-                        ForEach(logger.logs.filter { $0.message.contains("[\(collector.name)]") }, id: \.id) { log in
+                        ForEach(filteredLogs, id: \.id) { log in
                             HStack(alignment: .top, spacing: 8) {
                                 Text(formatDate(log.timestamp))
                                     .font(.custom("Menlo", size: 12))
@@ -37,21 +42,24 @@ struct LogViewer: View {
                             .textSelection(.enabled)
                             .id(log.id)
                         }
+                        
+                        Color.clear
+                            .frame(height: 1)
+                            .id("bottom")
                     }
                     .padding()
                 }
-                .onChange(of: CollectorLogger.shared.logs) { oldValue, newValue in
-                    if shouldAutoScroll {
-                        scrollToBottom(proxy: proxy)
+                .onChange(of: logger.logs.count) { _, newCount in
+                    if shouldAutoScroll && newCount > lastLogCount {
+                        DispatchQueue.main.async {
+                            withAnimation {
+                                proxy.scrollTo("bottom", anchor: .bottom)
+                            }
+                        }
                     }
+                    lastLogCount = newCount
                 }
             }
-        }
-    }
-    
-    private func scrollToBottom(proxy: ScrollViewProxy) {
-        if let lastLog = logger.logs.last {
-            proxy.scrollTo(lastLog.id, anchor: .bottom)
         }
     }
     

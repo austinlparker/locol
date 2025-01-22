@@ -1,8 +1,10 @@
 import Foundation
+import os
 
 class AppState: ObservableObject {
     @Published private(set) var collectors: [CollectorInstance]
     private let stateKey = "SavedCollectors"
+    private let logger = Logger.app
     
     init() {
         // Try to decode with new format first
@@ -10,7 +12,7 @@ class AppState: ObservableObject {
             do {
                 self.collectors = try JSONDecoder().decode([CollectorInstance].self, from: data)
             } catch {
-                AppLogger.shared.error("Failed to decode collectors with new format: \(error)")
+                logger.error("Failed to decode collectors with new format: \(error)")
                 // If decoding fails, clear the stored data to start fresh
                 UserDefaults.standard.removeObject(forKey: stateKey)
                 self.collectors = []

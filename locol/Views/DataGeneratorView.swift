@@ -18,23 +18,57 @@ struct DataGeneratorView: View {
         self._manager = ObservedObject(wrappedValue: manager)
     }
     
+    private var controlBar: some View {
+        HStack {
+            if manager.isRunning {
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(.green)
+                        .frame(width: 8, height: 8)
+                        .opacity(0.8)
+                    Text("Running")
+                        .foregroundStyle(.secondary)
+                }
+                .transition(.opacity)
+            }
+            
+            Spacer()
+            
+            if manager.isRunning {
+                Button(role: .destructive, action: manager.stopGenerator) {
+                    Label("Stop Generator", systemImage: "stop.circle.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+            } else {
+                Button(action: manager.startGenerator) {
+                    Label("Start Generator", systemImage: "play.circle.fill")
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding()
+        .animation(.default, value: manager.isRunning)
+    }
+    
     private var configurationView: some View {
         Form {
             Section {
                 HStack {
                     Spacer()
-                    Button("Save Configuration") {
-                        showingSaveDialog = true
+                    Button(action: { showingSaveDialog = true }) {
+                        Label("Save Configuration", systemImage: "square.and.arrow.down")
                     }
-                    Button("Load Configuration") {
-                        showingLoadDialog = true
+                    Button(action: { showingLoadDialog = true }) {
+                        Label("Load Configuration", systemImage: "square.and.arrow.up")
                     }
                 }
             }
             
             Section("Connection") {
                 TextField("Endpoint", text: $manager.config.endpoint)
-                Toggle("Insecure", isOn: $manager.config.insecure)
+                    .textFieldStyle(.roundedBorder)
+                Toggle("Insecure Connection", isOn: $manager.config.insecure)
                 Picker("Protocol", selection: $manager.config.transportProtocol) {
                     ForEach(DataGeneratorConfig.ProtocolType.allCases, id: \.self) { type in
                         Text(type.rawValue.uppercased())
@@ -47,19 +81,24 @@ struct DataGeneratorView: View {
                 ForEach(Array(manager.config.headers.keys), id: \.self) { key in
                     HStack {
                         Text(key)
+                            .foregroundStyle(.secondary)
                         Spacer()
                         Text(manager.config.headers[key] ?? "")
                         Button(role: .destructive) {
                             manager.config.headers.removeValue(forKey: key)
                         } label: {
                             Image(systemName: "trash")
+                                .foregroundStyle(.red)
                         }
+                        .buttonStyle(.borderless)
                     }
                 }
                 
                 HStack {
                     TextField("Key", text: $newHeaderKey)
+                        .textFieldStyle(.roundedBorder)
                     TextField("Value", text: $newHeaderValue)
+                        .textFieldStyle(.roundedBorder)
                     Button("Add") {
                         if !newHeaderKey.isEmpty {
                             manager.config.headers[newHeaderKey] = newHeaderValue
@@ -73,6 +112,7 @@ struct DataGeneratorView: View {
             
             Section("Generation Settings") {
                 TextField("Service Name", text: $manager.config.serviceName)
+                    .textFieldStyle(.roundedBorder)
                 
                 Picker("Log Level", selection: $manager.config.logLevel) {
                     ForEach(DataGeneratorConfig.LogLevel.allCases, id: \.self) { level in
@@ -104,10 +144,12 @@ struct DataGeneratorView: View {
             Section {
                 HStack {
                     Text("Rate (per second)")
+                        .foregroundStyle(.secondary)
                     Spacer()
                     TextField("Rate", value: $manager.config.rate, format: .number)
                         .frame(width: 100)
                         .multilineTextAlignment(.trailing)
+                        .textFieldStyle(.roundedBorder)
                 }
             }
         }
@@ -116,42 +158,44 @@ struct DataGeneratorView: View {
     }
     
     private var downloadPrompt: some View {
-        VStack {
+        VStack(spacing: 16) {
+            Image(systemName: "arrow.down.circle")
+                .font(.system(size: 48))
+                .foregroundStyle(.blue)
+            
             Text("Data Generator Not Found")
                 .font(.headline)
             Text("The data generator binary needs to be downloaded before use.")
                 .foregroundStyle(.secondary)
-            Button("Download") {
-                downloadGenerator()
+                .multilineTextAlignment(.center)
+            
+            Button(action: downloadGenerator) {
+                Label("Download Generator", systemImage: "arrow.down.circle")
+                    .frame(minWidth: 200)
             }
+            .buttonStyle(.borderedProminent)
         }
+        .padding(40)
+        .background(RoundedRectangle(cornerRadius: 12)
+            .fill(Color(nsColor: .controlBackgroundColor))
+            .shadow(radius: 2))
         .padding()
     }
     
     var body: some View {
         VStack(spacing: 0) {
-            // Status and Control Bar
-            HStack {
-                Text(manager.status)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                if manager.isRunning {
-                    Button("Stop", role: .destructive) {
-                        manager.stopGenerator()
-                    }
-                } else {
-                    Button("Start") {
-                        manager.startGenerator()
-                    }
-                }
-            }
-            .padding()
+            controlBar
             
             if manager.needsDownload {
                 downloadPrompt
             } else if isDownloading {
-                ProgressView("Downloading generator...")
-                    .padding()
+                VStack(spacing: 16) {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                    Text("Downloading generator...")
+                        .foregroundStyle(.secondary)
+                }
+                .padding()
             } else {
                 TabView(selection: $selectedTab) {
                     configurationView
@@ -229,7 +273,9 @@ struct SaveConfigurationView: View {
         NavigationView {
             Form {
                 TextField("Configuration Name", text: $configName)
+                    .textFieldStyle(.roundedBorder)
             }
+            .formStyle(.grouped)
             .navigationTitle("Save Configuration")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -242,6 +288,7 @@ struct SaveConfigurationView: View {
                         onSave(configName)
                         dismiss()
                     }
+                    .buttonStyle(.borderedProminent)
                     .disabled(configName.isEmpty)
                 }
             }
@@ -266,7 +313,9 @@ struct LoadConfigurationView: View {
                             onLoad(config)
                             dismiss()
                         }
+                        .buttonStyle(.borderedProminent)
                     }
+                    .padding(.vertical, 4)
                 }
                 .onDelete { indexSet in
                     indexSet.forEach { index in

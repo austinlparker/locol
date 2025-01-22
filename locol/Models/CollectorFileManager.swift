@@ -1,7 +1,9 @@
 import Foundation
+import os
 
 public class CollectorFileManager {
     static let shared = CollectorFileManager()
+    private let logger = Logger.app
     
     let baseDirectory: URL
     let templatesDirectory: URL
@@ -33,7 +35,7 @@ public class CollectorFileManager {
         let configPath = collectorDir.appendingPathComponent("config.yaml")
         
         try FileManager.default.createDirectory(at: binPath, withIntermediateDirectories: true)
-        AppLogger.shared.debug("Created directory at \(binPath.path)")
+        logger.debug("Created directory at \(binPath.path)")
         
         // Copy default config if it doesn't exist
         if !FileManager.default.fileExists(atPath: configPath.path),

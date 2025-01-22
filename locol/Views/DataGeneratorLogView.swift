@@ -3,6 +3,11 @@ import SwiftUI
 struct DataGeneratorLogView: View {
     @ObservedObject var logger = DataGeneratorLogger.shared
     @State private var shouldAutoScroll = true
+    @State private var lastLogCount = 0
+    
+    var logs: [LogEntry] {
+        Array(logger.logs)
+    }
     
     var body: some View {
         VStack {
@@ -22,7 +27,7 @@ struct DataGeneratorLogView: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading) {
-                        ForEach(logger.logs, id: \.id) { log in
+                        ForEach(logs, id: \.id) { log in
                             HStack(alignment: .top, spacing: 8) {
                                 Text(formatDate(log.timestamp))
                                     .font(.custom("Menlo", size: 12))
@@ -36,21 +41,24 @@ struct DataGeneratorLogView: View {
                             .textSelection(.enabled)
                             .id(log.id)
                         }
+                        
+                        Color.clear
+                            .frame(height: 1)
+                            .id("bottom")
                     }
                     .padding()
                 }
-                .onChange(of: logger.logs) { oldValue, newValue in
-                    if shouldAutoScroll {
-                        scrollToBottom(proxy: proxy)
+                .onChange(of: logger.logs.count) { _, newCount in
+                    if shouldAutoScroll && newCount > lastLogCount {
+                        DispatchQueue.main.async {
+                            withAnimation {
+                                proxy.scrollTo("bottom", anchor: .bottom)
+                            }
+                        }
                     }
+                    lastLogCount = newCount
                 }
             }
-        }
-    }
-    
-    private func scrollToBottom(proxy: ScrollViewProxy) {
-        if let lastLog = logger.logs.last {
-            proxy.scrollTo(lastLog.id, anchor: .bottom)
         }
     }
     

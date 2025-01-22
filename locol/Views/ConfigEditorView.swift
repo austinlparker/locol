@@ -7,6 +7,7 @@
 
 import SwiftUI
 import CodeEditor
+import os
 
 @MainActor
 class ConfigEditorViewModel: ObservableObject {
@@ -36,7 +37,7 @@ class ConfigEditorViewModel: ObservableObject {
             originalConfig = content
             snippetManager.loadConfig(from: collector.configPath)
         } catch {
-            AppLogger.shared.error("Failed to load config: \(error.localizedDescription)")
+            handleError(error)
             configText = snippetManager.defaultTemplate
             originalConfig = configText
         }
@@ -89,6 +90,12 @@ class ConfigEditorViewModel: ObservableObject {
     
     var snippets: [SnippetType: [ConfigSnippet]] {
         snippetManager.snippets
+    }
+    
+    private func handleError(_ error: Error) {
+        Logger.app.error("Failed to load config: \(error.localizedDescription)")
+        configText = snippetManager.defaultTemplate
+        originalConfig = configText
     }
 }
 

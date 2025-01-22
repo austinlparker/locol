@@ -1,7 +1,9 @@
 import Foundation
+import os
 
 class ReleaseManager: ObservableObject {
     @Published var availableReleases: [Release] = []
+    private let logger = Logger.app
     
     private let cacheKeyReleases = "CachedReleases"
     private let cacheKeyTimestamp = "CachedReleasesTimestamp"
@@ -10,7 +12,7 @@ class ReleaseManager: ObservableObject {
         if !forceRefresh, let cachedReleases = getCachedReleases() {
             DispatchQueue.main.async {
                 self.availableReleases = cachedReleases
-                AppLogger.shared.info("Loaded releases from cache.")
+                self.logger.info("Loaded releases from cache")
                 completion()
             }
             return
@@ -18,12 +20,12 @@ class ReleaseManager: ObservableObject {
         
         let urlString = "https://api.github.com/repos/open-telemetry/\(repo)/releases"
         guard let url = URL(string: urlString) else {
-            AppLogger.shared.error("Invalid URL: \(urlString)")
+            logger.error("Invalid URL: \(urlString)")
             completion()
             return
         }
 
-        AppLogger.shared.debug("Fetching releases from \(urlString)")
+        logger.debug("Fetching releases from \(urlString)")
 
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
@@ -31,13 +33,13 @@ class ReleaseManager: ObservableObject {
 
         let task = URLSession.shared.dataTask(with: request) { data, response, error in
             if let error = error {
-                AppLogger.shared.error("Error fetching releases: \(error.localizedDescription)")
+                self.logger.error("Error fetching releases: \(error.localizedDescription)")
                 completion()
                 return
             }
 
             guard let httpResponse = response as? HTTPURLResponse else {
-                AppLogger.shared.error("Invalid response received.")
+                self.logger.error("Invalid response received")
                 completion()
                 return
             }
@@ -45,13 +47,13 @@ class ReleaseManager: ObservableObject {
             if httpResponse.statusCode == 403, let resetTime = httpResponse.value(forHTTPHeaderField: "X-RateLimit-Reset") {
                 let resetTimestamp = Double(resetTime) ?? 0
                 let resetDate = Date(timeIntervalSince1970: resetTimestamp)
-                AppLogger.shared.error("Rate limited. Retry after \(resetDate).")
+                self.logger.error("Rate limited. Retry after \(resetDate)")
                 completion()
                 return
             }
 
             guard let data = data else {
-                AppLogger.shared.error("No data received")
+                self.logger.error("No data received")
                 completion()
                 return
             }
@@ -62,7 +64,7 @@ class ReleaseManager: ObservableObject {
                 let releases = try decoder.decode([Release].self, from: data)
 
                 let filteredReleases = self.filterReleases(releases)
-                AppLogger.shared.log("Filtered releases count: \(filteredReleases.count)")
+                self.logger.info("Filtered releases count: \(filteredReleases.count)")
                 self.cacheReleases(filteredReleases)
 
                 DispatchQueue.main.async {
@@ -70,7 +72,7 @@ class ReleaseManager: ObservableObject {
                     completion()
                 }
             } catch {
-                AppLogger.shared.error("Failed to decode releases: \(error.localizedDescription)")
+                self.logger.error("Failed to decode releases: \(error.localizedDescription)")
                 completion()
             }
         }
@@ -108,9 +110,9 @@ class ReleaseManager: ObservableObject {
             let encodedReleases = try JSONEncoder().encode(releases)
             UserDefaults.standard.set(encodedReleases, forKey: cacheKeyReleases)
             UserDefaults.standard.set(timestamp, forKey: cacheKeyTimestamp)
-            AppLogger.shared.info("Cached releases at \(timestamp).")
+            logger.info("Cached releases at \(timestamp)")
         } catch {
-            AppLogger.shared.error("Failed to cache releases: \(error.localizedDescription)")
+            logger.error("Failed to cache releases: \(error.localizedDescription)")
         }
     }
     
@@ -122,7 +124,7 @@ class ReleaseManager: ObservableObject {
         do {
             return try JSONDecoder().decode([Release].self, from: encodedReleases)
         } catch {
-            AppLogger.shared.error("Failed to decode cached releases: \(error.localizedDescription)")
+            logger.error("Failed to decode cached releases: \(error.localizedDescription)")
             return nil
         }
     }
@@ -130,6 +132,6 @@ class ReleaseManager: ObservableObject {
     func invalidateCache() {
         UserDefaults.standard.removeObject(forKey: cacheKeyReleases)
         UserDefaults.standard.removeObject(forKey: cacheKeyTimestamp)
-        AppLogger.shared.info("Cache invalidated.")
+        logger.info("Cache invalidated")
     }
 } 

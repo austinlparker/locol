@@ -8,6 +8,7 @@
 import SwiftUI
 import AppKit
 import Combine
+import os
 
 class AppTerminationHandler: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
@@ -116,6 +117,7 @@ struct locolApp: App {
     @StateObject private var terminationHandler = AppTerminationHandler()
     @StateObject private var dataGeneratorManager = DataGeneratorManager.shared
     @Environment(\.openWindow) private var openWindow
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     
     private func activateWindow(withId id: String) {
         NSApplication.shared.activate(ignoringOtherApps: true)
@@ -136,6 +138,36 @@ struct locolApp: App {
             Image("menubar-icon")
         }
         .menuBarExtraStyle(.menu)
+        .commands {
+            // Add app menu commands
+            CommandGroup(replacing: .appInfo) {
+                Button("About locol") {
+                    NSApplication.shared.orderFrontStandardAboutPanel(
+                        options: [
+                            .applicationName: "locol",
+                            .applicationVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "",
+                            .credits: NSAttributedString(
+                                string: "A local OpenTelemetry Collector manager.",
+                                attributes: [
+                                    .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
+                                ]
+                            )
+                        ]
+                    )
+                }
+            }
+            
+            // Add help menu commands
+            CommandGroup(replacing: .help) {
+                Link("locol Documentation",
+                     destination: URL(string: "https://github.com/austinlparker/locol")!)
+                
+                Divider()
+                
+                Link("Report an Issue",
+                     destination: URL(string: "https://github.com/austinlparker/locol/issues")!)
+            }
+        }
         
         Window("Settings", id: "SettingsWindow") {
             SettingsView(manager: collectorManager)
@@ -169,7 +201,16 @@ struct locolApp: App {
         
         Window("Send Data", id: "DataGeneratorWindow") {
             DataGeneratorView(manager: dataGeneratorManager)
+                .onAppear {
+                    activateWindow(withId: "DataGeneratorWindow")
+                }
         }
         .defaultSize(width: 600, height: 800)
+    }
+}
+
+class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        Logger.configureLogging()
     }
 }

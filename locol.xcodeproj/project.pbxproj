@@ -12,6 +12,8 @@
 		E10DC4EC2D3753BF003EB040 /* receivers in Resources */ = {isa = PBXBuildFile; fileRef = E10DC4E82D3753BF003EB040 /* receivers */; };
 		E10DC4ED2D3753BF003EB040 /* templates in Resources */ = {isa = PBXBuildFile; fileRef = E10DC4E92D3753BF003EB040 /* templates */; };
 		E15F8B752D3CAA96001547D4 /* CodeEditor in Frameworks */ = {isa = PBXBuildFile; productRef = E15F8B742D3CAA96001547D4 /* CodeEditor */; };
+		E1D7D1152D406746008D0708 /* Subprocess in Frameworks */ = {isa = PBXBuildFile; productRef = E1D7D1142D406746008D0708 /* Subprocess */; };
+		E1D7D1172D406746008D0708 /* SubprocessMocks in Frameworks */ = {isa = PBXBuildFile; productRef = E1D7D1162D406746008D0708 /* SubprocessMocks */; };
 		E1F6522A2D346DED0091A7E8 /* Yams in Frameworks */ = {isa = PBXBuildFile; productRef = E1F652292D346DED0091A7E8 /* Yams */; };
 /* End PBXBuildFile section */
 
@@ -68,6 +70,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E1D7D1172D406746008D0708 /* SubprocessMocks in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -77,6 +80,7 @@
 			files = (
 				E15F8B752D3CAA96001547D4 /* CodeEditor in Frameworks */,
 				E1F6522A2D346DED0091A7E8 /* Yams in Frameworks */,
+				E1D7D1152D406746008D0708 /* Subprocess in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -126,6 +130,7 @@
 			);
 			name = locolTests;
 			packageProductDependencies = (
+				E1D7D1162D406746008D0708 /* SubprocessMocks */,
 			);
 			productName = locolTests;
 			productReference = D2588F962D398E6F00B45761 /* locolTests.xctest */;
@@ -150,6 +155,7 @@
 			packageProductDependencies = (
 				E1F652292D346DED0091A7E8 /* Yams */,
 				E15F8B742D3CAA96001547D4 /* CodeEditor */,
+				E1D7D1142D406746008D0708 /* Subprocess */,
 			);
 			productName = locol;
 			productReference = E183103C2D3420390070D311 /* locol.app */;
@@ -186,6 +192,7 @@
 			packageReferences = (
 				E1F652282D346DED0091A7E8 /* XCRemoteSwiftPackageReference "Yams" */,
 				E15F8B732D3CAA96001547D4 /* XCRemoteSwiftPackageReference "CodeEditor" */,
+				E1D7D1132D406746008D0708 /* XCRemoteSwiftPackageReference "Subprocess" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = E183103D2D3420390070D311 /* Products */;
@@ -313,7 +320,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = YES;
-				DEBUG_INFORMATION_FORMAT = "";
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -376,7 +383,7 @@
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = YES;
-				DEBUG_INFORMATION_FORMAT = "";
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = YES;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
@@ -414,8 +421,10 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = locol;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
-				INFOPLIST_KEY_LSUIElement = YES;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_LSUIElement = NO;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2024 Austin Parker";
+				INFOPLIST_KEY_NSHelpBookName = "locol Help";
+				INFOPLIST_KEY_NSHelpBookFolder = "locol.help";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -446,8 +455,10 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = locol;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
-				INFOPLIST_KEY_LSUIElement = YES;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_LSUIElement = NO;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2024 Austin Parker";
+				INFOPLIST_KEY_NSHelpBookName = "locol Help";
+				INFOPLIST_KEY_NSHelpBookFolder = "locol.help";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -502,6 +513,14 @@
 				minimumVersion = 1.2.6;
 			};
 		};
+		E1D7D1132D406746008D0708 /* XCRemoteSwiftPackageReference "Subprocess" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/jamf/Subprocess";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 3.0.6;
+			};
+		};
 		E1F652282D346DED0091A7E8 /* XCRemoteSwiftPackageReference "Yams" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/jpsim/Yams.git";
@@ -517,6 +536,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = E15F8B732D3CAA96001547D4 /* XCRemoteSwiftPackageReference "CodeEditor" */;
 			productName = CodeEditor;
+		};
+		E1D7D1142D406746008D0708 /* Subprocess */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E1D7D1132D406746008D0708 /* XCRemoteSwiftPackageReference "Subprocess" */;
+			productName = Subprocess;
+		};
+		E1D7D1162D406746008D0708 /* SubprocessMocks */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E1D7D1132D406746008D0708 /* XCRemoteSwiftPackageReference "Subprocess" */;
+			productName = SubprocessMocks;
 		};
 		E1F652292D346DED0091A7E8 /* Yams */ = {
 			isa = XCSwiftPackageProductDependency;

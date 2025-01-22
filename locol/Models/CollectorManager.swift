@@ -7,6 +7,8 @@
 
 import Foundation
 import Combine
+import Subprocess
+import os
 
 class CollectorManager: ObservableObject {
     @Published private(set) var isDownloading: Bool = false
@@ -114,7 +116,7 @@ class CollectorManager: ObservableObject {
                                 self.downloadStatus = ""
                             }
                         } catch {
-                            AppLogger.shared.error("Failed to get collector components: \(error.localizedDescription)")
+                            self.handleError(error, context: "Failed to get collector components")
                             await MainActor.run {
                                 self.isDownloading = false
                                 self.downloadProgress = 0.0
@@ -123,7 +125,7 @@ class CollectorManager: ObservableObject {
                         }
                     }
                 case .failure(let error):
-                    AppLogger.shared.error("Failed to download collector: \(error.localizedDescription)")
+                    self.handleError(error, context: "Failed to download collector")
                     // Clean up the directory on failure
                     try? self.fileManager.deleteCollector(name: name)
                     self.isDownloading = false
@@ -132,7 +134,7 @@ class CollectorManager: ObservableObject {
                 }
             }
         } catch {
-            AppLogger.shared.error("Failed to create collector directory: \(error.localizedDescription)")
+            self.handleError(error, context: "Failed to create collector directory")
             isDownloading = false
             downloadProgress = 0.0
             downloadStatus = ""
@@ -153,7 +155,7 @@ class CollectorManager: ObservableObject {
         do {
             try fileManager.deleteCollector(name: collector.name)
         } catch {
-            AppLogger.shared.error("Failed to delete collector: \(error.localizedDescription)")
+            self.handleError(error, context: "Failed to delete collector")
             // TODO: Show error to user
         }
     }
@@ -167,9 +169,7 @@ class CollectorManager: ObservableObject {
             // Update collector state
             var updatedCollector = collector
             updatedCollector.isRunning = true
-            if let process = processManager.getActiveProcess() {
-                updatedCollector.pid = Int(process.processIdentifier)
-            }
+            updatedCollector.pid = Int(processManager.activeCollector?.process.pid ?? 0)
             updatedCollector.startTime = Date()
             appState.updateCollector(updatedCollector)
             activeCollector = updatedCollector
@@ -180,7 +180,7 @@ class CollectorManager: ObservableObject {
                 self.metricsManager.startScraping()
             }
         } catch {
-            AppLogger.shared.error("Failed to start collector: \(error.localizedDescription)")
+            self.handleError(error, context: "Failed to start collector")
         }
     }
     
@@ -210,7 +210,7 @@ class CollectorManager: ObservableObject {
             appState.updateCollector(updatedCollector)
             activeCollector = nil
         } catch {
-            AppLogger.shared.error("Failed to stop collector: \(error.localizedDescription)")
+            self.handleError(error, context: "Failed to stop collector")
         }
     }
     
@@ -225,7 +225,7 @@ class CollectorManager: ObservableObject {
         do {
             try fileManager.writeConfig(config, to: collector.configPath)
         } catch {
-            AppLogger.shared.error("Failed to write config: \(error.localizedDescription)")
+            self.handleError(error, context: "Failed to write config")
             // TODO: Show error to user
         }
     }
@@ -251,7 +251,7 @@ class CollectorManager: ObservableObject {
         do {
             return try fileManager.listConfigTemplates()
         } catch {
-            AppLogger.shared.error("Failed to list config templates: \(error.localizedDescription)")
+            self.handleError(error, context: "Failed to list config templates")
             return []
         }
     }
@@ -262,7 +262,7 @@ class CollectorManager: ObservableObject {
         do {
             try fileManager.applyConfigTemplate(named: templateName, to: collector.configPath)
         } catch {
-            AppLogger.shared.error("Failed to apply template: \(error.localizedDescription)")
+            self.handleError(error, context: "Failed to apply template")
         }
     }
     
@@ -276,6 +276,11 @@ class CollectorManager: ObservableObject {
         var updatedCollector = collector
         updatedCollector.components = components
         appState.updateCollector(updatedCollector)
+    }
+    
+    // Update error logging to use system logger
+    private func handleError(_ error: Error, context: String) {
+        Logger.app.error("\(context): \(error.localizedDescription)")
     }
 }
 

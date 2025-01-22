@@ -22,7 +22,7 @@ class MetricsManager: ObservableObject {
     private let scrapeInterval: TimeInterval = 15
     private let updateInterval: TimeInterval = 1.0  // Update views every second
     private var cancellables = Set<AnyCancellable>()
-    private let logger = Logger(subsystem: "io.aparker.locol", category: "MetricsManager")
+    private let logger = Logger.app
     private let maxAge: TimeInterval = 3600  // Keep last hour of data
     
     var urlSession: URLSession {

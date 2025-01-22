@@ -1,5 +1,5 @@
 {
-  "originHash" : "f088f28a5e6cdabed68dbb26e83715279dd4cafcbcc68844c5d14bcf03c133fe",
+  "originHash" : "6f31cb27bc577ea8ac197c1f1f4c427d0a0a9e787bfc973802f7e9c64c00eee6",
   "pins" : [
     {
       "identity" : "codeeditor",
@@ -17,6 +17,15 @@
       "state" : {
         "revision" : "bd0358056ff1f12ea83833a9fc1b3b5a396a9da0",
         "version" : "3.0.2"
+      }
+    },
+    {
+      "identity" : "subprocess",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/jamf/Subprocess",
+      "state" : {
+        "revision" : "9d67b79215836ae0dfce8b83d45e632c853b6a25",
+        "version" : "3.0.6"
       }
     },
     {
