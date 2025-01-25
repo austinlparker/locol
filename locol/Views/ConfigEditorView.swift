@@ -113,131 +113,24 @@ struct ListSectionHeader: View {
 }
 
 struct ConfigEditorView: View {
-    @StateObject private var viewModel: ConfigEditorViewModel
-    @Environment(\.colorScheme) private var colorScheme
+    let manager: CollectorManager
+    let collectorId: UUID?
     
-    init(manager: CollectorManager, collectorId: UUID) {
-        _viewModel = StateObject(wrappedValue: ConfigEditorViewModel(manager: manager, collectorId: collectorId))
+    var collector: CollectorInstance? {
+        guard let collectorId = collectorId else { return nil }
+        return manager.collectors.first { $0.id == collectorId }
     }
     
     var body: some View {
-        HSplitView {
-            snippetsSidebar
-            editorStack
-        }
-        .alert("Error", isPresented: $viewModel.showingSnippetError) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(viewModel.errorMessage)
-        }
-    }
-    
-    private var snippetsSidebar: some View {
-        VStack(spacing: 0) {
-            List {
-                ForEach(SnippetType.allCases, id: \.self) { type in
-                    Section {
-                        snippetContent(for: type)
-                    } header: {
-                        Text(type.displayName)
-                            .font(.system(.callout, weight: .medium))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .listStyle(.sidebar)
-        }
-        .frame(minWidth: 220, maxWidth: 300)
-        .background(Color(NSColor.controlBackgroundColor))
-    }
-    
-    private func snippetContent(for type: SnippetType) -> some View {
-        Group {
-            if let snippetsForType = viewModel.snippets[type], !snippetsForType.isEmpty {
-                ForEach(snippetsForType) { snippet in
-                    snippetRow(snippet)
-                }
-            } else {
-                Text("No snippets available")
-                    .font(.system(.body))
-                    .foregroundStyle(.secondary)
+        if let collector = collector {
+            ConfigEditor(collector: collector, manager: manager)
+        } else {
+            ContentUnavailableView {
+                Label("No Collector Selected", systemImage: "square.dashed")
+            } description: {
+                Text("Select a collector to edit its configuration")
             }
         }
-    }
-    
-    private func snippetRow(_ snippet: ConfigSnippet) -> some View {
-        HStack {
-            Text(snippet.name)
-                .font(.system(.body))
-                .truncationMode(.middle)
-            Spacer()
-            
-            HStack(spacing: 8) {
-                if viewModel.previewSnippet?.id == snippet.id {
-                    Button(action: { viewModel.mergeSnippet(snippet) }) {
-                        Label("Apply", systemImage: "checkmark.circle.fill")
-                    }
-                    .buttonStyle(.borderless)
-                    .labelStyle(.iconOnly)
-                    .help("Apply snippet")
-                    .tint(.accentColor)
-                    
-                    Button(action: { viewModel.cancelPreview() }) {
-                        Label("Cancel", systemImage: "xmark.circle.fill")
-                    }
-                    .buttonStyle(.borderless)
-                    .labelStyle(.iconOnly)
-                    .help("Cancel preview")
-                    .tint(.secondary)
-                } else {
-                    Button(action: { viewModel.previewSnippetMerge(snippet) }) {
-                        Label("Preview", systemImage: "eye.circle")
-                            .labelStyle(.iconOnly)
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Preview snippet")
-                }
-            }
-        }
-        .contentShape(Rectangle())
-    }
-    
-    private var editorStack: some View {
-        VStack(spacing: 0) {
-            editorToolbar
-            Divider()
-            editor
-        }
-    }
-    
-    private var editorToolbar: some View {
-        HStack {
-            if viewModel.previewSnippet != nil {
-                Label("Preview Mode", systemImage: "eye")
-                    .font(.system(.body))
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            Button(action: { viewModel.saveConfig() }) {
-                Label("Save", systemImage: "square.and.arrow.down")
-            }
-            .keyboardShortcut("s", modifiers: .command)
-            .buttonStyle(.borderedProminent)
-        }
-        .padding(.horizontal)
-        .padding(.vertical, 8)
-        .background(Color(NSColor.controlBackgroundColor))
-    }
-    
-    private var editor: some View {
-        CodeEditor(source: $viewModel.configText, 
-                  language: .yaml, 
-                  theme: colorScheme == .dark ? .ocean : .default,
-                  flags: [.selectable, .editable, .smartIndent],
-                  indentStyle: .softTab(width: 2),
-                  autoPairs: [:])
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

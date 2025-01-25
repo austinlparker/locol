@@ -9,8 +9,10 @@ import SwiftUI
 import AppKit
 import Combine
 import os
+import Observation
 
-class AppTerminationHandler: ObservableObject {
+@Observable
+final class AppTerminationHandler {
     private var cancellables = Set<AnyCancellable>()
     private var collectorManager: CollectorManager?
     
@@ -32,21 +34,9 @@ class AppTerminationHandler: ObservableObject {
 }
 
 private struct MenuBarView: View {
-    @ObservedObject var collectorManager: CollectorManager
-    @ObservedObject var terminationHandler: AppTerminationHandler
+    let collectorManager: CollectorManager
+    let terminationHandler: AppTerminationHandler
     @Environment(\.openWindow) private var openWindow
-    
-    private func activateWindow(withId id: String) {
-        NSApplication.shared.activate(ignoringOtherApps: true)
-        DispatchQueue.main.async {
-            NSApp.windows.forEach { window in
-                if window.identifier?.rawValue == id {
-                    window.makeKeyAndOrderFront(nil)
-                    window.orderFrontRegardless()
-                }
-            }
-        }
-    }
     
     var body: some View {
         Group {
@@ -55,46 +45,22 @@ private struct MenuBarView: View {
                     .foregroundStyle(.secondary)
             } else {
                 ForEach(collectorManager.collectors) { collector in
-                    Menu(collector.name) {
-                        Button(collector.isRunning ? "Stop" : "Start") {
-                            if collector.isRunning {
-                                collectorManager.stopCollector(withId: collector.id)
-                            } else {
-                                collectorManager.startCollector(withId: collector.id)
-                            }
-                        }
-                        
-                        Button("View Metrics & Logs") {
-                            NSApplication.shared.activate(ignoringOtherApps: true)
-                            openWindow(id: "MetricsLogViewerWindow", value: collector.id)
-                            activateWindow(withId: "MetricsLogViewerWindow")
-                        }
-                        
-                        Button("Edit Config") {
-                            NSApplication.shared.activate(ignoringOtherApps: true)
-                            openWindow(id: "ConfigEditorWindow", value: collector.id)
-                            activateWindow(withId: "ConfigEditorWindow")
-                        }
+                    Label {
+                        Text(collector.name)
+                    } icon: {
+                        Image(systemName: collector.isRunning ? "circle.fill" : "circle")
+                            .foregroundStyle(collector.isRunning ? .green : .secondary)
                     }
                 }
             }
             
             Divider()
             
-            Button("Settings...") {
+            Button("Show Dashboard") {
                 NSApplication.shared.activate(ignoringOtherApps: true)
-                openWindow(id: "SettingsWindow")
-                activateWindow(withId: "SettingsWindow")
+                openWindow(id: "MainWindow")
             }
             
-            Divider()
-            
-            Button("Send Data") {
-                NSApplication.shared.activate(ignoringOtherApps: true)
-                openWindow(id: "DataGeneratorWindow")
-                activateWindow(withId: "DataGeneratorWindow")
-            }
-
             Divider()
             
             Button("Quit") {
@@ -113,31 +79,44 @@ private struct MenuBarView: View {
 
 @main
 struct locolApp: App {
-    @StateObject private var collectorManager = CollectorManager()
-    @StateObject private var terminationHandler = AppTerminationHandler()
-    @StateObject private var dataGeneratorManager = DataGeneratorManager.shared
-    @Environment(\.openWindow) private var openWindow
+    @State private var collectorManager = CollectorManager()
+    @State private var dataGeneratorManager = DataGeneratorManager()
+    @State private var terminationHandler = AppTerminationHandler()
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     
-    private func activateWindow(withId id: String) {
-        NSApplication.shared.activate(ignoringOtherApps: true)
-        DispatchQueue.main.async {
-            NSApp.windows.forEach { window in
-                if window.identifier?.rawValue == id {
-                    window.makeKeyAndOrderFront(nil)
-                    window.orderFrontRegardless()
-                }
+    var body: some Scene {
+        WindowGroup(id: "MainWindow") {
+            MainDashboardView(
+                collectorManager: collectorManager,
+                dataGeneratorManager: dataGeneratorManager,
+                terminationHandler: terminationHandler
+            )
+        }
+        .windowStyle(.hiddenTitleBar)
+        
+        MenuBarExtra {
+            MenuBarView(
+                collectorManager: collectorManager,
+                terminationHandler: terminationHandler
+            )
+        } label: {
+            Image(systemName: "circle.hexagongrid.fill")
+        }
+        
+        Window("Config Editor", id: "ConfigEditorWindow") {
+            ConfigEditorView(manager: collectorManager, collectorId: nil)
+        }
+        
+        Window("Metrics & Logs", id: "MetricsLogViewerWindow") {
+            if let collectorId = NSApplication.shared.keyWindow?.identifier?.rawValue,
+               let collector = collectorManager.collectors.first(where: { $0.id.uuidString == collectorId }) {
+                MetricsLogView(collector: collector, manager: collectorManager)
+            } else {
+                Text("No collector selected")
+                    .foregroundStyle(.secondary)
             }
         }
-    }
-    
-    var body: some Scene {
-        MenuBarExtra {
-            MenuBarView(collectorManager: collectorManager, terminationHandler: terminationHandler)
-        } label: {
-            Image("menubar-icon")
-        }
-        .menuBarExtraStyle(.menu)
+        
         .commands {
             // Add app menu commands
             CommandGroup(replacing: .appInfo) {
@@ -168,49 +147,14 @@ struct locolApp: App {
                      destination: URL(string: "https://github.com/austinlparker/locol/issues")!)
             }
         }
-        
-        Window("Settings", id: "SettingsWindow") {
-            SettingsView(manager: collectorManager)
-                .onAppear {
-                    activateWindow(withId: "SettingsWindow")
-                }
-        }
-        .defaultSize(width: 900, height: 600)
-        
-        WindowGroup("Config Editor", id: "ConfigEditorWindow", for: UUID.self) { $collectorId in
-            if let id = collectorId,
-               let _ = collectorManager.collectors.first(where: { $0.id == id }) {
-                ConfigEditorView(manager: collectorManager, collectorId: id)
-                    .onAppear {
-                        activateWindow(withId: "ConfigEditorWindow")
-                    }
-            }
-        }
-        .defaultSize(width: 800, height: 600)
-        
-        WindowGroup("Metrics & Logs", id: "MetricsLogViewerWindow", for: UUID.self) { $collectorId in
-            if let id = collectorId,
-               let collector = collectorManager.collectors.first(where: { $0.id == id }) {
-                MetricsLogView(collector: collector, manager: collectorManager)
-                    .onAppear {
-                        activateWindow(withId: "MetricsLogViewerWindow")
-                    }
-            }
-        }
-        .defaultSize(width: 1000, height: 700)
-        
-        Window("Send Data", id: "DataGeneratorWindow") {
-            DataGeneratorView(manager: dataGeneratorManager)
-                .onAppear {
-                    activateWindow(withId: "DataGeneratorWindow")
-                }
-        }
-        .defaultSize(width: 600, height: 800)
     }
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         Logger.configureLogging()
+        
+        // Open main window on launch
+        NSApplication.shared.windows.first?.makeKeyAndOrderFront(nil)
     }
 }

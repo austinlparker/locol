@@ -112,7 +112,7 @@ struct ReleaseListView: View {
 
 struct AddCollectorView: View {
     @Binding var isPresented: Bool
-    @ObservedObject var manager: CollectorManager
+    var manager: CollectorManager
     @Binding var name: String
     @Binding var selectedRelease: Release?
     @State private var selectedAsset: ReleaseAsset?

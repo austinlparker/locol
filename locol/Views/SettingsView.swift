@@ -398,7 +398,7 @@ struct SearchField: View {
     }
 }
 
-struct CollectorDetailView: View {
+struct CollectorSettingsDetailView: View {
     let collector: CollectorInstance
     let manager: CollectorManager
     @Environment(\.openWindow) private var openWindow
@@ -512,51 +512,64 @@ struct CollectorDetailView: View {
 }
 
 struct SettingsView: View {
-    @ObservedObject var manager: CollectorManager
-    @State private var hasFetchedReleases: Bool = false
-    @State private var selectedCollectorId: UUID? = nil
-    @State private var showingAddCollector: Bool = false
-    @State private var newCollectorName: String = ""
-    @State private var selectedRelease: Release? = nil
+    let collectorManager: CollectorManager
     
     var body: some View {
-        HStack(spacing: 0) {
-            CollectorListView(
-                collectors: manager.collectors,
-                selectedCollectorId: $selectedCollectorId,
-                onAddCollector: { showingAddCollector = true },
-                onRemoveCollector: { id in
-                    manager.removeCollector(withId: id)
+        TabView {
+            GeneralSettingsView(collectorManager: collectorManager)
+                .tabItem {
+                    Label("General", systemImage: "gear")
                 }
-            )
             
-            Divider()
-            
-            if let collectorId = selectedCollectorId,
-               let collector = manager.collectors.first(where: { $0.id == collectorId }) {
-                CollectorDetailView(collector: collector, manager: manager)
-            } else {
-                ContentUnavailableView("No Collector Selected", 
-                    systemImage: "square.dashed",
-                    description: Text("Select a collector to view its details")
-                )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            CollectorSettingsView(collectorManager: collectorManager)
+                .tabItem {
+                    Label("Collectors", systemImage: "square.stack.3d.up")
+                }
+        }
+        .frame(width: 600, height: 400)
+        .padding()
+    }
+}
+
+private struct GeneralSettingsView: View {
+    let collectorManager: CollectorManager
+    @AppStorage("autoStartCollectors") private var autoStartCollectors = false
+    @AppStorage("showInMenuBar") private var showInMenuBar = true
+    
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Auto-start collectors on launch", isOn: $autoStartCollectors)
+                Toggle("Show in menu bar", isOn: $showInMenuBar)
             }
         }
-        .sheet(isPresented: $showingAddCollector) {
-            AddCollectorSheet(
-                manager: manager,
-                name: $newCollectorName,
-                selectedRelease: $selectedRelease
-            )
-            .presentationDetents([.medium])
-            .presentationDragIndicator(.visible)
-        }
-        .onAppear {
-            if !hasFetchedReleases {
-                manager.getCollectorReleases(repo: "opentelemetry-collector-releases")
-                hasFetchedReleases = true
+        .padding()
+    }
+}
+
+private struct CollectorSettingsView: View {
+    let collectorManager: CollectorManager
+    @State private var selectedCollector: CollectorInstance?
+    
+    var body: some View {
+        List(selection: $selectedCollector) {
+            ForEach(collectorManager.collectors) { collector in
+                CollectorSettingsRow(collector: collector)
             }
+        }
+    }
+}
+
+private struct CollectorSettingsRow: View {
+    let collector: CollectorInstance
+    
+    var body: some View {
+        VStack(alignment: .leading) {
+            Text(collector.name)
+                .font(.headline)
+            Text(collector.version)
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 }

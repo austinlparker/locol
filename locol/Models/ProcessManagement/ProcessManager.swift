@@ -1,9 +1,11 @@
 import Foundation
 import Yams
 import Subprocess
+import Observation
 
-class ProcessManager: ObservableObject {
-    @Published private(set) var activeCollector: (id: UUID, process: Subprocess)? = nil
+@Observable
+final class ProcessManager {
+    private(set) var activeCollector: (id: UUID, process: Subprocess)? = nil
     private let fileManager: CollectorFileManager
     
     init(fileManager: CollectorFileManager) {
@@ -38,7 +40,7 @@ class ProcessManager: ObservableObject {
                 }
             },
             terminationHandler: { [weak self] process in
-                DispatchQueue.main.async {
+                Task { @MainActor in
                     self?.handleProcessTermination(process)
                 }
             }
@@ -47,10 +49,8 @@ class ProcessManager: ObservableObject {
         // Set active collector immediately after successful launch
         self.activeCollector = (id: collector.id, process: process)
         
-        // Log success asynchronously
-        DispatchQueue.main.async {
-            CollectorLogger.shared.info("[\(collector.name)] Started collector process")
-        }
+        // Log success
+        CollectorLogger.shared.info("[\(collector.name)] Started collector process")
     }
     
     func stopCollector() throws {
@@ -73,10 +73,8 @@ class ProcessManager: ObservableObject {
         // Handle termination synchronously since we're already in a blocking call
         handleProcessTermination(active.process)
         
-        // Log asynchronously
-        DispatchQueue.main.async {
-            CollectorLogger.shared.info("Stopped collector process")
-        }
+        // Log
+        CollectorLogger.shared.info("Stopped collector process")
     }
     
     func isRunning(_ collector: CollectorInstance) -> Bool {

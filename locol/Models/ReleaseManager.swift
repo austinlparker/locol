@@ -1,8 +1,10 @@
 import Foundation
 import os
+import Observation
 
-class ReleaseManager: ObservableObject {
-    @Published var availableReleases: [Release] = []
+@Observable
+final class ReleaseManager {
+    var availableReleases: [Release] = []
     private let logger = Logger.app
     
     private let cacheKeyReleases = "CachedReleases"
@@ -10,7 +12,7 @@ class ReleaseManager: ObservableObject {
     
     func getCollectorReleases(repo: String, forceRefresh: Bool = false, completion: @escaping () -> Void = {}) {
         if !forceRefresh, let cachedReleases = getCachedReleases() {
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self.availableReleases = cachedReleases
                 self.logger.info("Loaded releases from cache")
                 completion()
@@ -31,7 +33,9 @@ class ReleaseManager: ObservableObject {
         request.httpMethod = "GET"
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
 
-        let task = URLSession.shared.dataTask(with: request) { data, response, error in
+        let task = URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            guard let self = self else { return }
+            
             if let error = error {
                 self.logger.error("Error fetching releases: \(error.localizedDescription)")
                 completion()
@@ -59,16 +63,19 @@ class ReleaseManager: ObservableObject {
             }
 
             do {
-                let decoder = JSONDecoder()
-                decoder.dateDecodingStrategy = .iso8601
-                let releases = try decoder.decode([Release].self, from: data)
-
-                let filteredReleases = self.filterReleases(releases)
-                self.logger.info("Filtered releases count: \(filteredReleases.count)")
-                self.cacheReleases(filteredReleases)
-
-                DispatchQueue.main.async {
+                let releases = try JSONDecoder().decode([Release].self, from: data)
+                let filteredReleases = releases.compactMap { release -> Release? in
+                    guard let assets = release.assets else { return nil }
+                    let darwinBinaryAssets = assets.filter { asset in
+                        asset.name.contains("darwin")
+                    }
+                    guard !darwinBinaryAssets.isEmpty else { return nil }
+                    return self.createFilteredRelease(from: release, with: darwinBinaryAssets)
+                }
+                
+                Task { @MainActor in
                     self.availableReleases = filteredReleases
+                    self.cacheReleases(filteredReleases)
                     completion()
                 }
             } catch {
@@ -76,32 +83,20 @@ class ReleaseManager: ObservableObject {
                 completion()
             }
         }
-
         task.resume()
     }
     
-    private func filterReleases(_ releases: [Release]) -> [Release] {
-        return releases.compactMap { release -> Release? in
-            guard release.tagName.range(of: #"^v\d+\.\d+\.\d+$"#, options: .regularExpression) != nil else {
-                return nil
-            }
-
-            let darwinBinaryAssets = release.assets?.filter { $0.name.contains("darwin") && $0.name.hasSuffix(".tar.gz") } ?? []
-            if darwinBinaryAssets.isEmpty {
-                return nil
-            }
-
-            return Release(
-                url: release.url,
-                htmlURL: release.htmlURL,
-                assetsURL: release.assetsURL,
-                tagName: release.tagName,
-                name: release.name,
-                publishedAt: release.publishedAt,
-                author: release.author,
-                assets: darwinBinaryAssets
-            )
-        }
+    private func createFilteredRelease(from release: Release, with darwinBinaryAssets: [ReleaseAsset]) -> Release {
+        return Release(
+            url: release.url,
+            htmlURL: release.htmlURL,
+            assetsURL: release.assetsURL,
+            tagName: release.tagName,
+            name: release.name,
+            publishedAt: release.publishedAt,
+            author: release.author,
+            assets: darwinBinaryAssets
+        )
     }
     
     private func cacheReleases(_ releases: [Release]) {
@@ -120,7 +115,7 @@ class ReleaseManager: ObservableObject {
         guard let timestamp = UserDefaults.standard.object(forKey: cacheKeyTimestamp) as? Date else { return nil }
         guard Date().timeIntervalSince(timestamp) < 3600 else { return nil } // Cache valid for 1 hour
         guard let encodedReleases = UserDefaults.standard.data(forKey: cacheKeyReleases) else { return nil }
-
+        
         do {
             return try JSONDecoder().decode([Release].self, from: encodedReleases)
         } catch {

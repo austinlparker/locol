@@ -28,4 +28,14 @@ struct CollectorInstance: Codable, Identifiable {
         self.startTime = startTime
         self.components = components
     }
+}
+
+extension CollectorInstance: Hashable {
+    static func == (lhs: CollectorInstance, rhs: CollectorInstance) -> Bool {
+        lhs.id == rhs.id
+    }
+    
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
 } 

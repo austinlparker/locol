@@ -280,19 +280,20 @@ struct MultiLogConfig: Codable {
     }
 }
 
-class DataGeneratorManager: ObservableObject {
+@Observable
+final class DataGeneratorManager {
     static let shared = DataGeneratorManager()
     
-    @Published var config: DataGeneratorConfig {
+    var config: DataGeneratorConfig {
         didSet {
             saveConfig()
         }
     }
-    @Published var isRunning = false
-    @Published var downloadProgress: Double = 0
-    @Published var status: String = ""
-    @Published var isDownloading = false
-    @Published var needsDownload = false
+    var isRunning = false
+    var downloadProgress: Double = 0
+    var status: String = ""
+    var isDownloading = false
+    var needsDownload = false
     
     private var process: Process?
     private let fileManager = CollectorFileManager.shared

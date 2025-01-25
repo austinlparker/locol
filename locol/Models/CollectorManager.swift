@@ -6,19 +6,19 @@
 //
 
 import Foundation
-import Combine
 import Subprocess
 import os
+import Observation
 
-class CollectorManager: ObservableObject {
-    @Published private(set) var isDownloading: Bool = false
-    @Published private(set) var isLoadingReleases: Bool = false
-    @Published var downloadProgress: Double = 0.0
-    @Published var downloadStatus: String = ""
-    @Published private(set) var activeCollector: CollectorInstance? = nil
+@Observable
+final class CollectorManager {
+    var isDownloading: Bool = false
+    var isLoadingReleases: Bool = false
+    var downloadProgress: Double = 0.0
+    var downloadStatus: String = ""
+    var activeCollector: CollectorInstance? = nil
     
     private var metricsManager = MetricsManager.shared
-    private var cancellables = Set<AnyCancellable>()
     
     let fileManager: CollectorFileManager
     let releaseManager: ReleaseManager
@@ -40,22 +40,18 @@ class CollectorManager: ObservableObject {
             appState.updateCollector(updatedCollector)
         }
         
-        // Set up bindings
-        downloadManager.objectWillChange.sink { [weak self] in
-            self?.objectWillChange.send()
+        // Set up bindings for download progress and status
+        Task { @MainActor in
+            for await progress in downloadManager.progressPublisher {
+                self.downloadProgress = progress
+            }
         }
-        .store(in: &cancellables)
         
-        downloadManager.$downloadProgress
-            .assign(to: &$downloadProgress)
-        
-        downloadManager.$downloadStatus
-            .assign(to: &$downloadStatus)
-            
-        processManager.objectWillChange.sink { [weak self] in
-            self?.objectWillChange.send()
+        Task { @MainActor in
+            for await status in downloadManager.statusPublisher {
+                self.downloadStatus = status
+            }
         }
-        .store(in: &cancellables)
     }
     
     var availableReleases: [Release] {
@@ -175,8 +171,9 @@ class CollectorManager: ObservableObject {
             activeCollector = updatedCollector
             
             // Start metrics manager
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+            Task { @MainActor in
                 // Give the collector time to start up before scraping metrics
+                try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
                 self.metricsManager.startScraping()
             }
         } catch {
@@ -240,7 +237,7 @@ class CollectorManager: ObservableObject {
     func getCollectorReleases(repo: String, forceRefresh: Bool = false, completion: @escaping () -> Void = {}) {
         isLoadingReleases = true
         releaseManager.getCollectorReleases(repo: repo, forceRefresh: forceRefresh) { [weak self] in
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self?.isLoadingReleases = false
                 completion()
             }

@@ -289,9 +289,7 @@ struct MetricPoint: Identifiable {
             rate: 1.67, // 100 items / 60 seconds
             timeWindow: 60,
             firstTimestamp: now.addingTimeInterval(-60),
-            lastTimestamp: now,
-            firstValue: 0,
-            lastValue: 100
+            lastTimestamp: now
         )
     )
     
@@ -303,13 +301,11 @@ struct MetricPoint: Identifiable {
             rate: 4.17, // 250 items / 60 seconds
             timeWindow: 60,
             firstTimestamp: now.addingTimeInterval(-60),
-            lastTimestamp: now,
-            firstValue: 0,
-            lastValue: 250
+            lastTimestamp: now
         )
     )
     
-    return CounterCard(name: "Processed Items", series: [batchSeries, streamSeries])
+    CounterCard(name: "Processed Items", series: [batchSeries, streamSeries])
         .frame(width: 400)
         .padding()
 } 

@@ -1,12 +1,13 @@
 import Foundation
-import Combine
 import os
+import Observation
 
-class MetricsManager: ObservableObject {
+@Observable
+final class MetricsManager {
     static let shared = MetricsManager()
     
-    @Published private(set) var metrics: [String: [Metric]] = [:]
-    @Published private(set) var lastError: String?
+    private(set) var metrics: [String: [Metric]] = [:]
+    private(set) var lastError: String?
     
     private var metricsCache: [String: [Metric]] = [:]
     private var updateTimer: Timer?
@@ -21,7 +22,6 @@ class MetricsManager: ObservableObject {
     )] = [:]
     private let scrapeInterval: TimeInterval = 15
     private let updateInterval: TimeInterval = 1.0  // Update views every second
-    private var cancellables = Set<AnyCancellable>()
     private let logger = Logger.app
     private let maxAge: TimeInterval = 3600  // Keep last hour of data
     
@@ -36,8 +36,33 @@ class MetricsManager: ObservableObject {
         let timeWindow: TimeInterval
         let firstTimestamp: Date
         let lastTimestamp: Date
-        let firstValue: Double
-        let lastValue: Double
+    }
+    
+    func startScraping() {
+        stopScraping() // Stop any existing timers
+        
+        // Create a timer for scraping metrics
+        scrapeTimer = Timer.scheduledTimer(withTimeInterval: scrapeInterval, repeats: true) { [weak self] _ in
+            self?.scrapeMetrics()
+        }
+        scrapeTimer?.fire() // Initial scrape
+        
+        // Create a timer for updating the UI
+        updateTimer = Timer.scheduledTimer(withTimeInterval: updateInterval, repeats: true) { [weak self] _ in
+            self?.publishUpdates()
+        }
+    }
+    
+    func stopScraping() {
+        scrapeTimer?.invalidate()
+        scrapeTimer = nil
+        updateTimer?.invalidate()
+        updateTimer = nil
+    }
+    
+    func getMetric(name: String, labels: [String: String]) -> [Metric]? {
+        let key = metricKey(name: name, labels: labels)
+        return metrics[key]
     }
     
     func calculateRate(for values: [Metric], preferredWindow: TimeInterval? = nil) -> RateInfo? {
@@ -72,65 +97,29 @@ class MetricsManager: ObservableObject {
             rate: rate,
             timeWindow: timeDelta,
             firstTimestamp: first.timestamp,
-            lastTimestamp: last.timestamp,
-            firstValue: first.value,
-            lastValue: last.value
+            lastTimestamp: last.timestamp
         )
     }
     
-    func getRate(for metricKey: String, timeWindow: TimeInterval? = nil) -> Double? {
-        guard let values = metrics[metricKey],
-              let type = values.first?.type,
-              type == .counter else {
-            return nil
-        }
-        
-        return calculateRate(for: values, preferredWindow: timeWindow)?.rate
-    }
-    
-    // MARK: - Scraping Control
-    
-    func startScraping() {
-        stopScraping() // Ensure we don't have multiple timers
-        
-        // Start the scrape timer
-        scrapeTimer = Timer.scheduledTimer(withTimeInterval: scrapeInterval, repeats: true) { [weak self] _ in
-            self?.scrapeMetrics()
-        }
-        
-        // Start the update timer
-        updateTimer = Timer.scheduledTimer(withTimeInterval: updateInterval, repeats: true) { [weak self] _ in
-            self?.publishUpdates()
-        }
-        
-        // Do an initial scrape
-        scrapeMetrics()
-    }
-    
-    func stopScraping() {
-        scrapeTimer?.invalidate()
-        scrapeTimer = nil
-        updateTimer?.invalidate()
-        updateTimer = nil
-    }
-    
-    // MARK: - Metric Key Generation
+    // MARK: - Internal Methods
     
     func metricKey(name: String, labels: [String: String]) -> String {
-        MetricKeyGenerator.generateKey(name: name, labels: labels)
+        let sortedLabels = labels.sorted(by: { $0.key < $1.key })
+        let labelString = sortedLabels.map { "\($0.key)=\($0.value)" }.joined(separator: ",")
+        return "\(name){\(labelString)}"
     }
     
     // MARK: - Private Methods
     
     private func scrapeMetrics() {
         guard let url = URL(string: "http://localhost:8888/metrics") else {
-            handleError("Failed to create metrics URL")
+            handleError("Invalid metrics URL")
             return
         }
         
         let task = urlSession.dataTask(with: url) { [weak self] data, response, error in
             if let error = error {
-                self?.handleError("Network error while scraping metrics: \(error.localizedDescription)")
+                self?.handleError("Failed to fetch metrics: \(error.localizedDescription)")
                 return
             }
             
@@ -154,7 +143,7 @@ class MetricsManager: ObservableObject {
                 return
             }
             
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 self?.processMetrics(metricsString)
             }
         }
@@ -227,94 +216,72 @@ class MetricsManager: ObservableObject {
         let baseName = MetricFilter.getBaseName(metric.name)
         
         for (labels, value) in metric.values {
-            let baseLabels = labels.filter { $0.key != "le" }
-            let key = metricKey(name: baseName, labels: baseLabels)
+            let key = metricKey(name: baseName, labels: labels)
             
-            // Initialize if needed
-            if histogramComponents[key] == nil {
-                histogramComponents[key] = (
-                    buckets: [],
-                    sum: nil,
-                    count: nil,
-                    labels: baseLabels,
-                    timestamp: timestamp,
-                    help: metric.help
-                )
-            }
-            
-            let originalName = labels["__name__"] ?? metric.name
-            
-            // Update component based on metric name suffix
-            if let le = labels["le"] {
-                // This is a bucket
+            if metric.name.hasSuffix("_bucket") {
+                // Extract le value from labels
+                guard let le = labels["le"] else {
+                    throw MetricError.invalidHistogramBuckets("missing le label")
+                }
+                
+                // Initialize histogram component if needed
+                if histogramComponents[key] == nil {
+                    histogramComponents[key] = (
+                        buckets: [],
+                        sum: nil,
+                        count: nil,
+                        labels: labels.filter { $0.key != "le" },
+                        timestamp: timestamp,
+                        help: metric.help
+                    )
+                }
+                
+                // Add bucket
                 let leValue = le == "+Inf" ? Double.infinity : Double(le) ?? Double.infinity
-                // Remove any existing bucket with the same le value
-                self.histogramComponents[key]?.buckets.removeAll { $0.le == leValue }
-                // Add the new bucket
-                self.histogramComponents[key]?.buckets.append((le: leValue, count: value))
-                // Sort buckets by le value
-                self.histogramComponents[key]?.buckets.sort { $0.le < $1.le }
-            } else if originalName.hasSuffix("_sum") {
+                histogramComponents[key]?.buckets.append((le: leValue, count: value))
+            } else if metric.name.hasSuffix("_sum") {
                 histogramComponents[key]?.sum = value
-            } else if originalName.hasSuffix("_count") {
+            } else if metric.name.hasSuffix("_count") {
                 histogramComponents[key]?.count = value
             }
             
-            // Try to finalize after each component update
-            try finalizeHistogramIfComplete(key: key)
-        }
-    }
-    
-    private func finalizeHistogramIfComplete(key: String) throws {
-        guard let components = histogramComponents[key] else {
-            return
-        }
-        
-        // Only proceed if we have all components
-        guard let sum = components.sum,
-              let count = components.count,
-              !components.buckets.isEmpty else {
-            return
-        }
-        
-        // Ensure buckets are properly sorted
-        let sortedBuckets = components.buckets.sorted { $0.le < $1.le }
-        
-        // Create samples for histogram factory
-        let samples = sortedBuckets.map { bucket in
-            let labels = components.labels.merging(["le": bucket.le == Double.infinity ? "+Inf" : String(bucket.le)]) { (_, new) in new }
-            return (labels: labels, value: bucket.count)
-        } + [
-            (labels: components.labels, value: sum),
-            (labels: components.labels, value: count)
-        ]
-        
-        if let histogram = HistogramMetric.from(samples: samples, timestamp: components.timestamp) {
-            let baseName = key.components(separatedBy: "{").first ?? key
-            let metric = Metric(
-                name: baseName,
-                type: .histogram,
-                help: components.help,
-                labels: components.labels,
-                timestamp: components.timestamp,
-                value: sum,
-                histogram: histogram
-            )
-            
-            if metricsCache[key] == nil {
-                metricsCache[key] = []
+            // If we have all components, create the histogram metric
+            if let component = histogramComponents[key],
+               let sum = component.sum,
+               let count = component.count {
+                // Create samples for histogram factory
+                let samples = component.buckets.map { bucket in
+                    let labels = component.labels.merging(["le": bucket.le == Double.infinity ? "+Inf" : String(bucket.le)]) { (_, new) in new }
+                    return (labels: labels, value: bucket.count)
+                } + [
+                    (labels: component.labels, value: sum),
+                    (labels: component.labels, value: count)
+                ]
+                
+                if let histogram = HistogramMetric.from(samples: samples, timestamp: timestamp) {
+                    let newMetric = Metric(
+                        name: baseName,
+                        type: .histogram,
+                        help: component.help,
+                        labels: component.labels,
+                        timestamp: timestamp,
+                        value: sum,
+                        histogram: histogram
+                    )
+                    
+                    if metricsCache[key] == nil {
+                        metricsCache[key] = []
+                    }
+                    metricsCache[key]?.append(newMetric)
+                    
+                    // Clear the component
+                    histogramComponents.removeValue(forKey: key)
+                }
             }
-            metricsCache[key]?.append(metric)
-            histogramComponents.removeValue(forKey: key)
-        } else {
-            logger.error("Failed to create histogram from samples")
-            throw MetricError.invalidHistogramBuckets(key)
         }
     }
     
     private func publishUpdates() {
-        // Since we're already on the main thread in processMetrics, 
-        // we don't need to dispatch again
         metrics = metricsCache
     }
     
@@ -332,7 +299,7 @@ class MetricsManager: ObservableObject {
     
     private func handleError(_ message: String) {
         logger.error("\(message)")
-        DispatchQueue.main.async {
+        Task { @MainActor in
             self.lastError = message
         }
     }

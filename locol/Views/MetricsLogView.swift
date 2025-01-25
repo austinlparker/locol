@@ -3,16 +3,21 @@ import SwiftUI
 struct MetricsLogView: View {
     let collector: CollectorInstance
     let manager: CollectorManager
+    let metricsManager: MetricsManager
     @State private var selectedTab = 0
     @State private var showError = false
     @State private var errorMessage: String?
     
+    init(collector: CollectorInstance, manager: CollectorManager, metricsManager: MetricsManager = .shared) {
+        self.collector = collector
+        self.manager = manager
+        self.metricsManager = metricsManager
+    }
+    
     private var metricsView: some View {
         VStack(alignment: .leading, spacing: 16) {
             if collector.isRunning {
-                let metricsManager = manager.getMetricsManager()
-                MetricsView()
-                    .environmentObject(metricsManager)
+                MetricsView(viewModel: MetricsViewModel(manager: metricsManager))
             } else {
                 ContentUnavailableView {
                     Label("Collector Not Running", systemImage: "chart.line.downtrend.xyaxis")

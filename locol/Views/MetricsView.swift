@@ -3,19 +3,35 @@ import Charts
 import os
 
 struct MetricsView: View {
-    @StateObject private var viewModel: MetricsViewModel
+    let viewModel: MetricsViewModel
+    @State private var selectedTimeRange: TimeRange = .oneMinute
     
-    init(manager: MetricsManager = .shared) {
-        _viewModel = StateObject(wrappedValue: MetricsViewModel(manager: manager))
+    init(viewModel: MetricsViewModel = MetricsViewModel()) {
+        self.viewModel = viewModel
     }
     
     var body: some View {
-        VStack(spacing: 0) {
-            toolbar
-            Divider()
-            ScrollView {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 400), spacing: 16)], spacing: 16) {
-                    ForEach(viewModel.groupedMetrics) { group in
+        VStack {
+            if let error = viewModel.error {
+                Text(error)
+                    .foregroundStyle(.red)
+                    .padding()
+            }
+            
+            Picker("Time Range", selection: $selectedTimeRange) {
+                ForEach(TimeRange.allCases) { range in
+                    Text(range.displayName).tag(range)
+                }
+            }
+            .pickerStyle(.segmented)
+            .padding()
+            .onChange(of: selectedTimeRange) { _, newValue in
+                viewModel.selectedTimeRange = newValue
+            }
+            
+            List {
+                ForEach(viewModel.groupedMetrics) { group in
+                    Section {
                         switch group {
                         case .counters(let name, let series):
                             CounterCard(name: name, series: series)
@@ -26,50 +42,8 @@ struct MetricsView: View {
                         }
                     }
                 }
-                .padding()
             }
         }
-    }
-    
-    private var toolbar: some View {
-        HStack {
-            Text("Metrics")
-                .font(.title2)
-                .fontWeight(.semibold)
-            
-            Spacer()
-            
-            HStack(spacing: 8) {
-                ForEach(TimeRange.allCases) { range in
-                    Button(action: {
-                        viewModel.selectedTimeRange = range
-                    }) {
-                        Text(range.displayName)
-                            .font(.caption)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                    }
-                    .buttonStyle(.plain)
-                    .background {
-                        if viewModel.selectedTimeRange == range {
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(Color.accentColor)
-                        } else {
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(Color.secondary.opacity(0.3), lineWidth: 1)
-                        }
-                    }
-                    .foregroundStyle(viewModel.selectedTimeRange == range ? .white : .primary)
-                }
-            }
-            .padding(4)
-            .background {
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color(NSColor.controlBackgroundColor))
-            }
-        }
-        .padding()
-        .background(Color(NSColor.controlBackgroundColor))
     }
 }
 

@@ -3,7 +3,7 @@ import SwiftUI
 struct AddCollectorSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    @ObservedObject var manager: CollectorManager
+    var manager: CollectorManager
     @Binding var name: String
     @Binding var selectedRelease: Release?
     @State private var selectedAsset: ReleaseAsset?

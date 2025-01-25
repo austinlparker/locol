@@ -12,6 +12,7 @@
 		E10DC4EC2D3753BF003EB040 /* receivers in Resources */ = {isa = PBXBuildFile; fileRef = E10DC4E82D3753BF003EB040 /* receivers */; };
 		E10DC4ED2D3753BF003EB040 /* templates in Resources */ = {isa = PBXBuildFile; fileRef = E10DC4E92D3753BF003EB040 /* templates */; };
 		E15F8B752D3CAA96001547D4 /* CodeEditor in Frameworks */ = {isa = PBXBuildFile; productRef = E15F8B742D3CAA96001547D4 /* CodeEditor */; };
+		E192EB422D4477D900400474 /* OTelSwiftServer in Frameworks */ = {isa = PBXBuildFile; productRef = E192EB412D4477D900400474 /* OTelSwiftServer */; };
 		E1D7D1152D406746008D0708 /* Subprocess in Frameworks */ = {isa = PBXBuildFile; productRef = E1D7D1142D406746008D0708 /* Subprocess */; };
 		E1D7D1172D406746008D0708 /* SubprocessMocks in Frameworks */ = {isa = PBXBuildFile; productRef = E1D7D1162D406746008D0708 /* SubprocessMocks */; };
 		E1F6522A2D346DED0091A7E8 /* Yams in Frameworks */ = {isa = PBXBuildFile; productRef = E1F652292D346DED0091A7E8 /* Yams */; };
@@ -81,6 +82,7 @@
 				E15F8B752D3CAA96001547D4 /* CodeEditor in Frameworks */,
 				E1F6522A2D346DED0091A7E8 /* Yams in Frameworks */,
 				E1D7D1152D406746008D0708 /* Subprocess in Frameworks */,
+				E192EB422D4477D900400474 /* OTelSwiftServer in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -156,6 +158,7 @@
 				E1F652292D346DED0091A7E8 /* Yams */,
 				E15F8B742D3CAA96001547D4 /* CodeEditor */,
 				E1D7D1142D406746008D0708 /* Subprocess */,
+				E192EB412D4477D900400474 /* OTelSwiftServer */,
 			);
 			productName = locol;
 			productReference = E183103C2D3420390070D311 /* locol.app */;
@@ -193,6 +196,7 @@
 				E1F652282D346DED0091A7E8 /* XCRemoteSwiftPackageReference "Yams" */,
 				E15F8B732D3CAA96001547D4 /* XCRemoteSwiftPackageReference "CodeEditor" */,
 				E1D7D1132D406746008D0708 /* XCRemoteSwiftPackageReference "Subprocess" */,
+				E192EB402D4477D900400474 /* XCRemoteSwiftPackageReference "otel-swift-server" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = E183103D2D3420390070D311 /* Products */;
@@ -422,9 +426,9 @@
 				INFOPLIST_KEY_CFBundleDisplayName = locol;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_LSUIElement = NO;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2024 Austin Parker";
+				INFOPLIST_KEY_NSHelpBookFolder = locol.help;
 				INFOPLIST_KEY_NSHelpBookName = "locol Help";
-				INFOPLIST_KEY_NSHelpBookFolder = "locol.help";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2024 Austin Parker";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -456,9 +460,9 @@
 				INFOPLIST_KEY_CFBundleDisplayName = locol;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_LSUIElement = NO;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2024 Austin Parker";
+				INFOPLIST_KEY_NSHelpBookFolder = locol.help;
 				INFOPLIST_KEY_NSHelpBookName = "locol Help";
-				INFOPLIST_KEY_NSHelpBookFolder = "locol.help";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "© 2024 Austin Parker";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -513,6 +517,14 @@
 				minimumVersion = 1.2.6;
 			};
 		};
+		E192EB402D4477D900400474 /* XCRemoteSwiftPackageReference "otel-swift-server" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/austinlparker/otel-swift-server";
+			requirement = {
+				branch = main;
+				kind = branch;
+			};
+		};
 		E1D7D1132D406746008D0708 /* XCRemoteSwiftPackageReference "Subprocess" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/jamf/Subprocess";
@@ -536,6 +548,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = E15F8B732D3CAA96001547D4 /* XCRemoteSwiftPackageReference "CodeEditor" */;
 			productName = CodeEditor;
+		};
+		E192EB412D4477D900400474 /* OTelSwiftServer */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E192EB402D4477D900400474 /* XCRemoteSwiftPackageReference "otel-swift-server" */;
+			productName = OTelSwiftServer;
 		};
 		E1D7D1142D406746008D0708 /* Subprocess */ = {
 			isa = XCSwiftPackageProductDependency;

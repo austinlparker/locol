@@ -1,8 +1,8 @@
 import SwiftUI
 
 struct DataGeneratorView: View {
-    @ObservedObject var manager: DataGeneratorManager
-    @StateObject private var configManager = DataGeneratorConfigManager.shared
+    let manager: DataGeneratorManager
+    let configManager: DataGeneratorConfigManager
     @State private var error: Error?
     @State private var showError = false
     @State private var showingSaveDialog = false
@@ -14,8 +14,9 @@ struct DataGeneratorView: View {
     @State private var selectedTab = 0
     @State private var isDownloading = false
     
-    init(manager: DataGeneratorManager = .shared) {
-        self._manager = ObservedObject(wrappedValue: manager)
+    init(manager: DataGeneratorManager = .shared, configManager: DataGeneratorConfigManager = .shared) {
+        self.manager = manager
+        self.configManager = configManager
     }
     
     private var controlBar: some View {
@@ -66,10 +67,21 @@ struct DataGeneratorView: View {
             }
             
             Section("Connection") {
-                TextField("Endpoint", text: $manager.config.endpoint)
-                    .textFieldStyle(.roundedBorder)
-                Toggle("Insecure Connection", isOn: $manager.config.insecure)
-                Picker("Protocol", selection: $manager.config.transportProtocol) {
+                TextField("Endpoint", text: Binding(
+                    get: { manager.config.endpoint },
+                    set: { manager.config.endpoint = $0 }
+                ))
+                .textFieldStyle(.roundedBorder)
+                
+                Toggle("Insecure Connection", isOn: Binding(
+                    get: { manager.config.insecure },
+                    set: { manager.config.insecure = $0 }
+                ))
+                
+                Picker("Protocol", selection: Binding(
+                    get: { manager.config.transportProtocol },
+                    set: { manager.config.transportProtocol = $0 }
+                )) {
                     ForEach(DataGeneratorConfig.ProtocolType.allCases, id: \.self) { type in
                         Text(type.rawValue.uppercased())
                             .tag(type)
@@ -111,17 +123,26 @@ struct DataGeneratorView: View {
             }
             
             Section("Generation Settings") {
-                TextField("Service Name", text: $manager.config.serviceName)
-                    .textFieldStyle(.roundedBorder)
+                TextField("Service Name", text: Binding(
+                    get: { manager.config.serviceName },
+                    set: { manager.config.serviceName = $0 }
+                ))
+                .textFieldStyle(.roundedBorder)
                 
-                Picker("Log Level", selection: $manager.config.logLevel) {
+                Picker("Log Level", selection: Binding(
+                    get: { manager.config.logLevel },
+                    set: { manager.config.logLevel = $0 }
+                )) {
                     ForEach(DataGeneratorConfig.LogLevel.allCases, id: \.self) { level in
                         Text(level.rawValue.uppercased())
                             .tag(level)
                     }
                 }
                 
-                Picker("Data Type", selection: $manager.config.dataType) {
+                Picker("Data Type", selection: Binding(
+                    get: { manager.config.dataType },
+                    set: { manager.config.dataType = $0 }
+                )) {
                     ForEach(DataGeneratorConfig.DataType.allCases, id: \.self) { type in
                         Text(type.rawValue.capitalized)
                             .tag(type)
@@ -133,11 +154,20 @@ struct DataGeneratorView: View {
             Section {
                 switch manager.config.dataType {
                 case .traces:
-                    TracesConfigView(config: $manager.config.tracesConfig)
+                    TracesConfigView(config: Binding(
+                        get: { manager.config.tracesConfig },
+                        set: { manager.config.tracesConfig = $0 }
+                    ))
                 case .metrics:
-                    MetricsConfigView(config: $manager.config.metricsConfig)
+                    MetricsConfigView(config: Binding(
+                        get: { manager.config.metricsConfig },
+                        set: { manager.config.metricsConfig = $0 }
+                    ))
                 case .logs:
-                    LogsConfigView(config: $manager.config.logsConfig)
+                    LogsConfigView(config: Binding(
+                        get: { manager.config.logsConfig },
+                        set: { manager.config.logsConfig = $0 }
+                    ))
                 }
             }
             
@@ -146,10 +176,13 @@ struct DataGeneratorView: View {
                     Text("Rate (per second)")
                         .foregroundStyle(.secondary)
                     Spacer()
-                    TextField("Rate", value: $manager.config.rate, format: .number)
-                        .frame(width: 100)
-                        .multilineTextAlignment(.trailing)
-                        .textFieldStyle(.roundedBorder)
+                    TextField("Rate", value: Binding(
+                        get: { manager.config.rate },
+                        set: { manager.config.rate = $0 }
+                    ), format: .number)
+                    .frame(width: 100)
+                    .multilineTextAlignment(.trailing)
+                    .textFieldStyle(.roundedBorder)
                 }
             }
         }

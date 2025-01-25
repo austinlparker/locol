@@ -1,5 +1,7 @@
 import Foundation
 import Combine
+import SwiftUI
+import Observation
 
 // MARK: - Types
 
@@ -77,24 +79,32 @@ enum TimeRange: Int, CaseIterable, Identifiable {
     }
 }
 
-@MainActor
-class MetricsViewModel: ObservableObject {
-    @Published private(set) var groupedMetrics: [MetricGroup] = []
-    @Published var selectedTimeRange: TimeRange = .fiveMinutes
-    
-    private var cancellables = Set<AnyCancellable>()
+@Observable
+final class MetricsViewModel {
     private let manager: MetricsManager
+    private var timer: Timer?
+    
+    var groupedMetrics: [MetricGroup] = []
+    var selectedTimeRange: TimeRange = .oneMinute
+    var error: String?
     
     init(manager: MetricsManager = .shared) {
         self.manager = manager
         
-        // Observe metrics changes
-        manager.$metrics
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] metrics in
-                self?.processMetrics(metrics)
-            }
-            .store(in: &cancellables)
+        // Start timer to update metrics periodically
+        timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            self?.updateMetrics()
+        }
+        timer?.fire()
+    }
+    
+    deinit {
+        timer?.invalidate()
+    }
+    
+    func updateMetrics() {
+        processMetrics(manager.metrics)
+        error = manager.lastError
     }
     
     private func processMetrics(_ metrics: [String: [Metric]]) {
@@ -156,6 +166,8 @@ class MetricsViewModel: ObservableObject {
     }
     
     private func metricKey(name: String, labels: [String: String]) -> String {
-        manager.metricKey(name: name, labels: labels)
+        let sortedLabels = labels.sorted(by: { $0.key < $1.key })
+        let labelString = sortedLabels.map { "\($0.key)=\($0.value)" }.joined(separator: ",")
+        return "\(name){\(labelString)}"
     }
 } 
