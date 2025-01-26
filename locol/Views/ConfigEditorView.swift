@@ -9,27 +9,27 @@ import SwiftUI
 import CodeEditor
 import os
 
-@MainActor
-class ConfigEditorViewModel: ObservableObject {
-    @Published var configText: String = ""
-    @Published var showingSnippetError = false
-    @Published var errorMessage = ""
-    @Published var previewSnippet: ConfigSnippet?
+@Observable
+final class ConfigEditorViewModel {
+    var configText: String = ""
+    var showingSnippetError = false
+    var errorMessage = ""
+    var previewSnippet: ConfigSnippet?
     
     private var originalConfig: String = ""
     private let snippetManager: ConfigSnippetManager
-    private let manager: CollectorManager
+    private let appState: AppState
     private let collectorId: UUID
     
-    init(manager: CollectorManager, collectorId: UUID) {
-        self.manager = manager
+    init(appState: AppState, collectorId: UUID) {
+        self.appState = appState
         self.collectorId = collectorId
         self.snippetManager = ConfigSnippetManager()
         loadConfig()
     }
     
     func loadConfig() {
-        guard let collector = manager.collectors.first(where: { $0.id == collectorId }) else { return }
+        guard let collector = appState.collectors.first(where: { $0.id == collectorId }) else { return }
         
         do {
             let content = try String(contentsOfFile: collector.configPath, encoding: .utf8)
@@ -69,7 +69,7 @@ class ConfigEditorViewModel: ObservableObject {
             }
             previewSnippet = nil
             
-            guard let collector = manager.collectors.first(where: { $0.id == collectorId }) else { return }
+            guard let collector = appState.collectors.first(where: { $0.id == collectorId }) else { return }
             try snippetManager.saveConfig(to: collector.configPath)
         } catch {
             errorMessage = "Failed to merge snippet: \(error.localizedDescription)"
@@ -80,7 +80,7 @@ class ConfigEditorViewModel: ObservableObject {
     }
     
     func saveConfig() {
-        manager.updateCollectorConfig(withId: collectorId, config: configText)
+        appState.updateCollectorConfig(withId: collectorId, config: configText)
     }
     
     func cancelPreview() {
@@ -113,17 +113,23 @@ struct ListSectionHeader: View {
 }
 
 struct ConfigEditorView: View {
-    let manager: CollectorManager
+    let appState: AppState
     let collectorId: UUID?
+    @State private var viewModel: ConfigEditorViewModel?
     
     var collector: CollectorInstance? {
         guard let collectorId = collectorId else { return nil }
-        return manager.collectors.first { $0.id == collectorId }
+        return appState.collectors.first { $0.id == collectorId }
     }
     
     var body: some View {
         if let collector = collector {
-            ConfigEditor(collector: collector, manager: manager)
+            ConfigEditorContent(collector: collector, viewModel: viewModel ?? ConfigEditorViewModel(appState: appState, collectorId: collector.id))
+                .onAppear {
+                    if viewModel == nil {
+                        viewModel = ConfigEditorViewModel(appState: appState, collectorId: collector.id)
+                    }
+                }
         } else {
             ContentUnavailableView {
                 Label("No Collector Selected", systemImage: "square.dashed")
@@ -134,8 +140,148 @@ struct ConfigEditorView: View {
     }
 }
 
+private struct SnippetButton: View {
+    let snippet: ConfigSnippet
+    let isSelected: Bool
+    let onTap: () -> Void
+    
+    var body: some View {
+        Button(action: onTap) {
+            HStack {
+                VStack(alignment: .leading) {
+                    Text(snippet.name)
+                        .font(.headline)
+                }
+                
+                Spacer()
+                
+                if isSelected {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.blue)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+private struct SnippetFooter: View {
+    let onApply: () -> Void
+    let onCancel: () -> Void
+    
+    var body: some View {
+        HStack {
+            Button("Apply Snippet", action: onApply)
+                .keyboardShortcut(.return, modifiers: .command)
+            
+            Button("Cancel", action: onCancel)
+                .keyboardShortcut(.escape, modifiers: [])
+        }
+        .padding()
+    }
+}
+
+private struct SnippetPane: View {
+    let snippets: [SnippetType: [ConfigSnippet]]
+    let selectedSnippetId: UUID?
+    let onSnippetSelected: (ConfigSnippet) -> Void
+    let onApplySnippet: (() -> Void)?
+    let onCancelPreview: (() -> Void)?
+    
+    var body: some View {
+        VStack {
+            List {
+                ForEach(Array(snippets.keys.sorted(by: { $0.rawValue < $1.rawValue })), id: \.self) { type in
+                    Section {
+                        ForEach(snippets[type] ?? []) { snippet in
+                            SnippetButton(
+                                snippet: snippet,
+                                isSelected: selectedSnippetId == snippet.id,
+                                onTap: { onSnippetSelected(snippet) }
+                            )
+                        }
+                    } header: {
+                        ListSectionHeader(title: type.rawValue)
+                    }
+                }
+            }
+            
+            if onApplySnippet != nil {
+                SnippetFooter(
+                    onApply: { onApplySnippet?() },
+                    onCancel: { onCancelPreview?() }
+                )
+            }
+        }
+        .frame(minWidth: 250, maxWidth: 300)
+    }
+}
+
+private struct EditorPane: View {
+    @Binding var configText: String
+    let onSave: () -> Void
+    let onCancelPreview: (() -> Void)?
+    
+    var body: some View {
+        VStack {
+            CodeEditor(
+                source: $configText,
+                language: .yaml,
+                theme: .ocean,
+                autoPairs: ["(": ")", "[": "]", "{": "}", "\"": "\""]
+            )
+            .font(.system(.body, design: .monospaced))
+            
+            HStack {
+                Button("Save", action: onSave)
+                    .keyboardShortcut("s", modifiers: .command)
+                
+                if onCancelPreview != nil {
+                    Button("Cancel Preview", action: { onCancelPreview?() })
+                }
+            }
+            .padding()
+        }
+    }
+}
+
+private struct ConfigEditorContent: View {
+    let collector: CollectorInstance
+    @State var viewModel: ConfigEditorViewModel
+    @State private var showingError = false
+    
+    var body: some View {
+        HSplitView {
+            EditorPane(
+                configText: Binding(
+                    get: { viewModel.configText },
+                    set: { viewModel.configText = $0 }
+                ),
+                onSave: { viewModel.saveConfig() },
+                onCancelPreview: viewModel.previewSnippet != nil ? { viewModel.cancelPreview() } : nil
+            )
+            
+            SnippetPane(
+                snippets: viewModel.snippets,
+                selectedSnippetId: viewModel.previewSnippet?.id,
+                onSnippetSelected: { viewModel.previewSnippetMerge($0) },
+                onApplySnippet: viewModel.previewSnippet != nil ? { viewModel.mergeSnippet(viewModel.previewSnippet!) } : nil,
+                onCancelPreview: viewModel.previewSnippet != nil ? { viewModel.cancelPreview() } : nil
+            )
+        }
+        .alert("Error", isPresented: $showingError) {
+            Button("OK") {}
+        } message: {
+            Text(viewModel.errorMessage)
+        }
+        .onChange(of: viewModel.showingSnippetError) {
+            showingError = viewModel.showingSnippetError
+        }
+    }
+}
+
 #Preview {
-    let mockManager = CollectorManager()
+    let appState = AppState()
     let mockCollectorId = UUID()
     
     // Create mock release data
@@ -160,15 +306,17 @@ struct ConfigEditorView: View {
         assets: [mockAsset]
     )
     
-    mockManager.addCollector(
+    // Add mock collector to appState
+    let collector = CollectorInstance(
         name: "Mock Collector",
         version: mockRelease.tagName,
-        release: mockRelease,
-        asset: mockAsset
+        binaryPath: "/tmp/mock",
+        configPath: "/tmp/mock.yaml"
     )
+    appState.addCollector(collector)
     
     return ConfigEditorView(
-        manager: mockManager,
+        appState: appState,
         collectorId: mockCollectorId
     )
     .frame(width: 800, height: 600)

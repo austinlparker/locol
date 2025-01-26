@@ -1,12 +1,88 @@
 import Foundation
 import os
 
-enum MetricType: String {
+enum MetricType: String, CaseIterable {
     case counter
     case gauge
     case histogram
 }
 
+// MARK: - Series Types
+struct MetricSeries: Identifiable {
+    let name: String
+    let metrics: [Metric]
+    let labels: [String: String]
+    
+    var id: String { name }
+}
+
+struct CounterSeries: Identifiable {
+    let name: String
+    let metrics: [Metric]
+    let labels: [String: String]
+    let rateInfo: MetricsManager.RateInfo
+    
+    var id: String { name }
+}
+
+enum MetricGroup: Identifiable {
+    case counters(name: String, series: [CounterSeries])
+    case gauge(metrics: [Metric])
+    case histogram(metric: Metric, histogram: HistogramMetric)
+    
+    var id: String {
+        switch self {
+        case .counters(let name, _):
+            return "counter-\(name)"
+        case .gauge(let metrics):
+            // Include labels in ID to make it unique
+            let labels = metrics[0].labels.sorted(by: { $0.key < $1.key })
+                .map { "\($0.key)=\($0.value)" }
+                .joined(separator: ",")
+            return "gauge-\(metrics[0].name)-\(labels)"
+        case .histogram(let metric, _):
+            // Include labels in ID to make it unique
+            let labels = metric.labels.sorted(by: { $0.key < $1.key })
+                .map { "\($0.key)=\($0.value)" }
+                .joined(separator: ",")
+            return "histogram-\(metric.name)-\(labels)"
+        }
+    }
+    
+    // For consistent ordering
+    var sortKey: String {
+        switch self {
+        case .counters(let name, _):
+            return "1-\(name)"
+        case .gauge(let metrics):
+            return "2-\(metrics[0].name)"
+        case .histogram(let metric, _):
+            return "3-\(metric.name)"
+        }
+    }
+}
+
+enum TimeRange: Int, CaseIterable, Identifiable {
+    case oneMinute = 60
+    case fiveMinutes = 300
+    case fifteenMinutes = 900
+    case thirtyMinutes = 1800
+    case oneHour = 3600
+    
+    var id: Int { rawValue }
+    
+    var displayName: String {
+        switch self {
+        case .oneMinute: return "1 minute"
+        case .fiveMinutes: return "5 minutes"
+        case .fifteenMinutes: return "15 minutes"
+        case .thirtyMinutes: return "30 minutes"
+        case .oneHour: return "1 hour"
+        }
+    }
+}
+
+// MARK: - Base Types
 struct Metric: Identifiable {
     let id: String  // Generated from name + labels
     let name: String

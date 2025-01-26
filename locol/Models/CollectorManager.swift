@@ -227,13 +227,6 @@ final class CollectorManager {
         }
     }
     
-    func updateCollectorFlags(withId id: UUID, flags: String) {
-        guard let collector = appState.getCollector(withId: id) else { return }
-        var updatedCollector = collector
-        updatedCollector.commandLineFlags = flags
-        appState.updateCollector(updatedCollector)
-    }
-    
     func getCollectorReleases(repo: String, forceRefresh: Bool = false, completion: @escaping () -> Void = {}) {
         isLoadingReleases = true
         releaseManager.getCollectorReleases(repo: repo, forceRefresh: forceRefresh) { [weak self] in

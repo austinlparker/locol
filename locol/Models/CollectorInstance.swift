@@ -1,12 +1,11 @@
 import Foundation
 
-struct CollectorInstance: Codable, Identifiable {
+struct CollectorInstance: Identifiable, Codable {
     let id: UUID
     let name: String
     let version: String
     let binaryPath: String
     let configPath: String
-    var commandLineFlags: String
     var isRunning: Bool
     var pid: Int?
     var startTime: Date?
@@ -16,13 +15,12 @@ struct CollectorInstance: Codable, Identifiable {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".locol/collectors/\(name)").path
     }
     
-    init(id: UUID = UUID(), name: String, version: String, binaryPath: String, configPath: String, commandLineFlags: String = "", isRunning: Bool = false, pid: Int? = nil, startTime: Date? = nil, components: ComponentList? = nil) {
+    init(id: UUID = UUID(), name: String, version: String, binaryPath: String, configPath: String, isRunning: Bool = false, pid: Int? = nil, startTime: Date? = nil, components: ComponentList? = nil) {
         self.id = id
         self.name = name
         self.version = version
         self.binaryPath = binaryPath
         self.configPath = configPath
-        self.commandLineFlags = commandLineFlags
         self.isRunning = isRunning
         self.pid = pid
         self.startTime = startTime
@@ -30,11 +28,13 @@ struct CollectorInstance: Codable, Identifiable {
     }
 }
 
-extension CollectorInstance: Hashable {
+extension CollectorInstance: Equatable {
     static func == (lhs: CollectorInstance, rhs: CollectorInstance) -> Bool {
         lhs.id == rhs.id
     }
-    
+}
+
+extension CollectorInstance: Hashable {
     func hash(into hasher: inout Hasher) {
         hasher.combine(id)
     }

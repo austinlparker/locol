@@ -12,7 +12,9 @@
 		E10DC4EC2D3753BF003EB040 /* receivers in Resources */ = {isa = PBXBuildFile; fileRef = E10DC4E82D3753BF003EB040 /* receivers */; };
 		E10DC4ED2D3753BF003EB040 /* templates in Resources */ = {isa = PBXBuildFile; fileRef = E10DC4E92D3753BF003EB040 /* templates */; };
 		E15F8B752D3CAA96001547D4 /* CodeEditor in Frameworks */ = {isa = PBXBuildFile; productRef = E15F8B742D3CAA96001547D4 /* CodeEditor */; };
-		E192EB422D4477D900400474 /* OTelSwiftServer in Frameworks */ = {isa = PBXBuildFile; productRef = E192EB412D4477D900400474 /* OTelSwiftServer */; };
+		E1AE5BA12D45785300594BF6 /* DuckDB in Frameworks */ = {isa = PBXBuildFile; productRef = E1AE5BA02D45785300594BF6 /* DuckDB */; };
+		E1AE5BD02D459DA800594BF6 /* FlyingFox in Frameworks */ = {isa = PBXBuildFile; productRef = E1AE5BCF2D459DA800594BF6 /* FlyingFox */; };
+		E1AE5BD32D459EA800594BF6 /* SwiftProtobuf in Frameworks */ = {isa = PBXBuildFile; productRef = E1AE5BD22D459EA800594BF6 /* SwiftProtobuf */; };
 		E1D7D1152D406746008D0708 /* Subprocess in Frameworks */ = {isa = PBXBuildFile; productRef = E1D7D1142D406746008D0708 /* Subprocess */; };
 		E1D7D1172D406746008D0708 /* SubprocessMocks in Frameworks */ = {isa = PBXBuildFile; productRef = E1D7D1162D406746008D0708 /* SubprocessMocks */; };
 		E1F6522A2D346DED0091A7E8 /* Yams in Frameworks */ = {isa = PBXBuildFile; productRef = E1F652292D346DED0091A7E8 /* Yams */; };
@@ -79,10 +81,12 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E1AE5BA12D45785300594BF6 /* DuckDB in Frameworks */,
 				E15F8B752D3CAA96001547D4 /* CodeEditor in Frameworks */,
 				E1F6522A2D346DED0091A7E8 /* Yams in Frameworks */,
 				E1D7D1152D406746008D0708 /* Subprocess in Frameworks */,
-				E192EB422D4477D900400474 /* OTelSwiftServer in Frameworks */,
+				E1AE5BD02D459DA800594BF6 /* FlyingFox in Frameworks */,
+				E1AE5BD32D459EA800594BF6 /* SwiftProtobuf in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -98,6 +102,7 @@
 				E10DC4E92D3753BF003EB040 /* templates */,
 				E183103E2D3420390070D311 /* locol */,
 				D2588F972D398E6F00B45761 /* locolTests */,
+				E1AE5B9F2D45785300594BF6 /* Frameworks */,
 				E183103D2D3420390070D311 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -109,6 +114,13 @@
 				D2588F962D398E6F00B45761 /* locolTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		};
+		E1AE5B9F2D45785300594BF6 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			name = Frameworks;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -158,7 +170,9 @@
 				E1F652292D346DED0091A7E8 /* Yams */,
 				E15F8B742D3CAA96001547D4 /* CodeEditor */,
 				E1D7D1142D406746008D0708 /* Subprocess */,
-				E192EB412D4477D900400474 /* OTelSwiftServer */,
+				E1AE5BA02D45785300594BF6 /* DuckDB */,
+				E1AE5BCF2D459DA800594BF6 /* FlyingFox */,
+				E1AE5BD22D459EA800594BF6 /* SwiftProtobuf */,
 			);
 			productName = locol;
 			productReference = E183103C2D3420390070D311 /* locol.app */;
@@ -196,7 +210,9 @@
 				E1F652282D346DED0091A7E8 /* XCRemoteSwiftPackageReference "Yams" */,
 				E15F8B732D3CAA96001547D4 /* XCRemoteSwiftPackageReference "CodeEditor" */,
 				E1D7D1132D406746008D0708 /* XCRemoteSwiftPackageReference "Subprocess" */,
-				E192EB402D4477D900400474 /* XCRemoteSwiftPackageReference "otel-swift-server" */,
+				E192EB4F2D4573BB00400474 /* XCRemoteSwiftPackageReference "duckdb-swift" */,
+				E1AE5BCE2D459DA800594BF6 /* XCRemoteSwiftPackageReference "FlyingFox" */,
+				E1AE5BD12D459EA800594BF6 /* XCRemoteSwiftPackageReference "swift-protobuf" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = E183103D2D3420390070D311 /* Products */;
@@ -331,7 +347,7 @@
 				GCC_C_LANGUAGE_STANDARD = "compiler-default";
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
-				GCC_OPTIMIZATION_LEVEL = s;
+				GCC_OPTIMIZATION_LEVEL = 0;
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"DEBUG=1",
 					"$(inherited)",
@@ -393,6 +409,7 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = "compiler-default";
 				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = s;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
 				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
 				GCC_WARN_UNDECLARED_SELECTOR = YES;
@@ -517,12 +534,28 @@
 				minimumVersion = 1.2.6;
 			};
 		};
-		E192EB402D4477D900400474 /* XCRemoteSwiftPackageReference "otel-swift-server" */ = {
+		E192EB4F2D4573BB00400474 /* XCRemoteSwiftPackageReference "duckdb-swift" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/austinlparker/otel-swift-server";
+			repositoryURL = "https://github.com/duckdb/duckdb-swift";
 			requirement = {
-				branch = main;
-				kind = branch;
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.9.0;
+			};
+		};
+		E1AE5BCE2D459DA800594BF6 /* XCRemoteSwiftPackageReference "FlyingFox" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/swhitty/FlyingFox.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 0.20.0;
+			};
+		};
+		E1AE5BD12D459EA800594BF6 /* XCRemoteSwiftPackageReference "swift-protobuf" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/apple/swift-protobuf.git";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.28.2;
 			};
 		};
 		E1D7D1132D406746008D0708 /* XCRemoteSwiftPackageReference "Subprocess" */ = {
@@ -549,10 +582,20 @@
 			package = E15F8B732D3CAA96001547D4 /* XCRemoteSwiftPackageReference "CodeEditor" */;
 			productName = CodeEditor;
 		};
-		E192EB412D4477D900400474 /* OTelSwiftServer */ = {
+		E1AE5BA02D45785300594BF6 /* DuckDB */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = E192EB402D4477D900400474 /* XCRemoteSwiftPackageReference "otel-swift-server" */;
-			productName = OTelSwiftServer;
+			package = E192EB4F2D4573BB00400474 /* XCRemoteSwiftPackageReference "duckdb-swift" */;
+			productName = DuckDB;
+		};
+		E1AE5BCF2D459DA800594BF6 /* FlyingFox */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E1AE5BCE2D459DA800594BF6 /* XCRemoteSwiftPackageReference "FlyingFox" */;
+			productName = FlyingFox;
+		};
+		E1AE5BD22D459EA800594BF6 /* SwiftProtobuf */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E1AE5BD12D459EA800594BF6 /* XCRemoteSwiftPackageReference "swift-protobuf" */;
+			productName = SwiftProtobuf;
 		};
 		E1D7D1142D406746008D0708 /* Subprocess */ = {
 			isa = XCSwiftPackageProductDependency;

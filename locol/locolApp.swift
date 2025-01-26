@@ -14,19 +14,19 @@ import Observation
 @Observable
 final class AppTerminationHandler {
     private var cancellables = Set<AnyCancellable>()
-    private var collectorManager: CollectorManager?
+    private var appState: AppState?
     
-    func setup(collectorManager: CollectorManager) {
-        self.collectorManager = collectorManager
+    func setup(appState: AppState) {
+        self.appState = appState
         
         NSApplication.shared.publisher(for: \.currentEvent)
             .filter { $0?.type == .applicationDefined }
             .sink { [weak self] _ in
                 guard let self = self,
-                      let manager = self.collectorManager else { return }
+                      let appState = self.appState else { return }
                 // Stop all collectors before quitting
-                for collector in manager.collectors where collector.isRunning {
-                    manager.stopCollector(withId: collector.id)
+                for collector in appState.collectors where collector.isRunning {
+                    appState.stopCollector(withId: collector.id)
                 }
             }
             .store(in: &cancellables)
@@ -34,17 +34,17 @@ final class AppTerminationHandler {
 }
 
 private struct MenuBarView: View {
-    let collectorManager: CollectorManager
+    let appState: AppState
     let terminationHandler: AppTerminationHandler
     @Environment(\.openWindow) private var openWindow
     
     var body: some View {
         Group {
-            if collectorManager.collectors.isEmpty {
+            if appState.collectors.isEmpty {
                 Text("No collectors configured")
                     .foregroundStyle(.secondary)
             } else {
-                ForEach(collectorManager.collectors) { collector in
+                ForEach(appState.collectors) { collector in
                     Label {
                         Text(collector.name)
                     } icon: {
@@ -65,57 +65,82 @@ private struct MenuBarView: View {
             
             Button("Quit") {
                 // Stop all collectors before quitting
-                for collector in collectorManager.collectors where collector.isRunning {
-                    collectorManager.stopCollector(withId: collector.id)
+                for collector in appState.collectors where collector.isRunning {
+                    appState.stopCollector(withId: collector.id)
                 }
                 NSApplication.shared.terminate(nil)
             }
         }
         .onAppear {
-            terminationHandler.setup(collectorManager: collectorManager)
+            terminationHandler.setup(appState: appState)
+        }
+    }
+}
+
+// MARK: - Scenes
+struct MainScene: Scene {
+    let appState: AppState
+    let dataGeneratorManager: DataGeneratorManager
+    let terminationHandler: AppTerminationHandler
+    
+    var body: some Scene {
+        WindowGroup(id: "MainWindow") {
+            MainDashboardView(
+                appState: appState,
+                dataGeneratorManager: dataGeneratorManager,
+                terminationHandler: terminationHandler
+            )
+        }
+        .windowStyle(.hiddenTitleBar)
+    }
+}
+
+struct MenuBarScene: Scene {
+    let appState: AppState
+    let terminationHandler: AppTerminationHandler
+    
+    var body: some Scene {
+        MenuBarExtra {
+            MenuBarView(
+                appState: appState,
+                terminationHandler: terminationHandler
+            )
+        } label: {
+            Image(systemName: "circle.hexagongrid.fill")
+        }
+    }
+}
+
+struct ConfigEditorScene: Scene {
+    let appState: AppState
+    
+    var body: some Scene {
+        WindowGroup("Config Editor", id: "ConfigEditorWindow", for: String.self) { collectorId in
+            ConfigEditorWindowContent(appState: appState, collectorId: collectorId)
         }
     }
 }
 
 @main
 struct locolApp: App {
-    @State private var collectorManager = CollectorManager()
+    @State private var appState = AppState()
     @State private var dataGeneratorManager = DataGeneratorManager()
     @State private var terminationHandler = AppTerminationHandler()
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     
     var body: some Scene {
-        WindowGroup(id: "MainWindow") {
-            MainDashboardView(
-                collectorManager: collectorManager,
-                dataGeneratorManager: dataGeneratorManager,
-                terminationHandler: terminationHandler
-            )
-        }
-        .windowStyle(.hiddenTitleBar)
+        MainScene(
+            appState: appState,
+            dataGeneratorManager: dataGeneratorManager,
+            terminationHandler: terminationHandler
+        )
         
-        MenuBarExtra {
-            MenuBarView(
-                collectorManager: collectorManager,
-                terminationHandler: terminationHandler
-            )
-        } label: {
-            Image(systemName: "circle.hexagongrid.fill")
-        }
+        MenuBarScene(
+            appState: appState,
+            terminationHandler: terminationHandler
+        )
         
-        Window("Config Editor", id: "ConfigEditorWindow") {
-            ConfigEditorView(manager: collectorManager, collectorId: nil)
-        }
-        
-        Window("Metrics & Logs", id: "MetricsLogViewerWindow") {
-            if let collectorId = NSApplication.shared.keyWindow?.identifier?.rawValue,
-               let collector = collectorManager.collectors.first(where: { $0.id.uuidString == collectorId }) {
-                MetricsLogView(collector: collector, manager: collectorManager)
-            } else {
-                Text("No collector selected")
-                    .foregroundStyle(.secondary)
-            }
-        }
+        ConfigEditorScene(appState: appState)
         
         .commands {
             // Add app menu commands
@@ -156,5 +181,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         
         // Open main window on launch
         NSApplication.shared.windows.first?.makeKeyAndOrderFront(nil)
+    }
+}
+
+// MARK: - Window Content Views
+private struct ConfigEditorWindowContent: View {
+    let appState: AppState
+    @Binding var collectorId: String?
+    
+    var body: some View {
+        if let collectorId = collectorId,
+           let collector = appState.collectors.first(where: { $0.id.uuidString == collectorId }) {
+            ConfigEditorView(appState: appState, collectorId: collector.id)
+        } else {
+            ConfigEditorView(appState: appState, collectorId: nil)
+        }
     }
 }

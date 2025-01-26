@@ -13,15 +13,18 @@ final class ProcessManager {
     }
     
     func startCollector(_ collector: CollectorInstance) throws {
+        // Stop any running collector first
         if activeCollector != nil {
-            // Stop the currently running collector first
             try stopCollector()
         }
         
         // Build command array
         var command = [collector.binaryPath, "--config", collector.configPath]
-        if !collector.commandLineFlags.isEmpty {
-            command.append(contentsOf: collector.commandLineFlags.components(separatedBy: " "))
+        
+        // Check for feature gates
+        let featureGatesPath = collector.configPath.replacingOccurrences(of: ".yaml", with: ".featuregates")
+        if let featureGates = try? String(contentsOfFile: featureGatesPath, encoding: .utf8), !featureGates.isEmpty {
+            command.append(contentsOf: ["--feature-gates", featureGates])
         }
         
         let process = Subprocess(command)
@@ -46,7 +49,6 @@ final class ProcessManager {
             }
         )
         
-        // Set active collector immediately after successful launch
         self.activeCollector = (id: collector.id, process: process)
         
         // Log success
@@ -87,7 +89,6 @@ final class ProcessManager {
     }
     
     func getCollectorComponents(_ collector: CollectorInstance) async throws -> ComponentList {
-        // Use string(for:) convenience method for simple command execution
         let output = try await Subprocess.string(for: [collector.binaryPath, "components"])
         return try YAMLDecoder().decode(ComponentList.self, from: output)
     }

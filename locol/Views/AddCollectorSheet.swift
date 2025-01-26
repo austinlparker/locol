@@ -3,7 +3,7 @@ import SwiftUI
 struct AddCollectorSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    var manager: CollectorManager
+    let appState: AppState
     @Binding var name: String
     @Binding var selectedRelease: Release?
     @State private var selectedAsset: ReleaseAsset?
@@ -15,16 +15,16 @@ struct AddCollectorSheet: View {
     
     var body: some View {
         VStack(spacing: 16) {
-            if manager.isDownloading {
+            if appState.isDownloading {
                 ProgressView {
-                    Text(manager.downloadStatus)
+                    Text(appState.downloadStatus)
                         .font(.body)
                         .foregroundStyle(.secondary)
                 }
                 .progressViewStyle(.linear)
                 .controlSize(.large)
                 .padding()
-            } else if manager.isLoadingReleases {
+            } else if appState.isLoadingReleases {
                 VStack(spacing: 8) {
                     ProgressView()
                     Text("Fetching available versions...")
@@ -50,7 +50,7 @@ struct AddCollectorSheet: View {
                             .font(.headline)
                     }
                     
-                    if manager.availableReleases.isEmpty {
+                    if appState.availableReleases.isEmpty {
                         Section {
                             ContentUnavailableView {
                                 Label("No Versions Available", systemImage: "exclamationmark.triangle")
@@ -58,7 +58,7 @@ struct AddCollectorSheet: View {
                                 Text("Try refreshing the list")
                             } actions: {
                                 Button("Refresh") {
-                                    manager.getCollectorReleases(repo: "opentelemetry-collector-releases", forceRefresh: true)
+                                    appState.getCollectorReleases(repo: "opentelemetry-collector-releases", forceRefresh: true)
                                 }
                             }
                             .padding()
@@ -66,7 +66,7 @@ struct AddCollectorSheet: View {
                     } else {
                         Section {
                             ReleaseSelectionView(
-                                releases: manager.availableReleases,
+                                releases: appState.availableReleases,
                                 selectedAssetId: selectedAsset?.id,
                                 onAssetSelected: { release, asset in
                                     selectedAsset = asset
@@ -90,20 +90,25 @@ struct AddCollectorSheet: View {
                     dismiss()
                 }
                 .keyboardShortcut(.escape, modifiers: [])
-                .disabled(manager.isDownloading)
+                .disabled(appState.isDownloading)
                 
                 Button("Add") {
                     if let release = selectedRelease, let asset = selectedAsset {
-                        manager.addCollector(
+                        let collector = CollectorInstance(
                             name: name,
                             version: release.tagName,
-                            release: release,
-                            asset: asset
+                            binaryPath: "", // This will be set by AppState
+                            configPath: ""  // This will be set by AppState
                         )
+                        appState.addCollector(collector)
+                        dismiss()
+                        selectedAsset = nil
+                        selectedRelease = nil
+                        name = ""
                     }
                 }
                 .keyboardShortcut(.return, modifiers: [.command])
-                .disabled(name.isEmpty || selectedAsset == nil || manager.isDownloading)
+                .disabled(name.isEmpty || selectedAsset == nil || appState.isDownloading)
             }
             .padding(.horizontal)
         }
@@ -112,11 +117,11 @@ struct AddCollectorSheet: View {
         .fixedSize(horizontal: true, vertical: false)
         .onAppear {
             isNameFieldFocused = true
-            if manager.availableReleases.isEmpty {
-                manager.getCollectorReleases(repo: "opentelemetry-collector-releases")
+            if appState.availableReleases.isEmpty {
+                appState.getCollectorReleases(repo: "opentelemetry-collector-releases")
             }
         }
-        .onChange(of: manager.isDownloading) { oldValue, newValue in
+        .onChange(of: appState.isDownloading) { oldValue, newValue in
             if !newValue {
                 dismiss()
             }
