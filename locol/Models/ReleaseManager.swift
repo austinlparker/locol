@@ -10,7 +10,7 @@ final class ReleaseManager {
     private let cacheKeyReleases = "CachedReleases"
     private let cacheKeyTimestamp = "CachedReleasesTimestamp"
     
-    func getCollectorReleases(repo: String, forceRefresh: Bool = false, completion: @escaping () -> Void = {}) {
+    func getCollectorReleases(repo: String, forceRefresh: Bool = false, completion: @escaping () -> Void = {}) async {
         if !forceRefresh, let cachedReleases = getCachedReleases() {
             Task { @MainActor in
                 self.availableReleases = cachedReleases

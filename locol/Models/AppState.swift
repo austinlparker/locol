@@ -204,12 +204,12 @@ final class AppState {
     func getCollectorReleases(repo: String, forceRefresh: Bool = false) {
         Task { @MainActor in
             isLoadingReleases = true
+            defer { isLoadingReleases = false }
             do {
                 try await releaseManager.getCollectorReleases(repo: repo, forceRefresh: forceRefresh)
             } catch {
                 handleError(error, context: "Failed to get collector releases")
             }
-            isLoadingReleases = false
         }
     }
     
