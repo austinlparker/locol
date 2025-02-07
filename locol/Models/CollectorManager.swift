@@ -18,8 +18,6 @@ final class CollectorManager {
     var downloadStatus: String = ""
     var activeCollector: CollectorInstance? = nil
     
-    private var metricsManager = MetricsManager.shared
-    
     let fileManager: CollectorFileManager
     let releaseManager: ReleaseManager
     let downloadManager: DownloadManager
@@ -152,7 +150,6 @@ final class CollectorManager {
             try fileManager.deleteCollector(name: collector.name)
         } catch {
             self.handleError(error, context: "Failed to delete collector")
-            // TODO: Show error to user
         }
     }
     
@@ -169,13 +166,6 @@ final class CollectorManager {
             updatedCollector.startTime = Date()
             appState.updateCollector(updatedCollector)
             activeCollector = updatedCollector
-            
-            // Start metrics manager
-            Task { @MainActor in
-                // Give the collector time to start up before scraping metrics
-                try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
-                self.metricsManager.startScraping()
-            }
         } catch {
             self.handleError(error, context: "Failed to start collector")
         }
@@ -184,10 +174,6 @@ final class CollectorManager {
     func stopCollector(withId id: UUID) {
         guard let collector = appState.getCollector(withId: id) else { return }
         
-        // Stop metrics manager first
-        metricsManager.stopScraping()
-        
-        // Then stop the collector
         do {
             try processManager.stopCollector()
             
@@ -223,13 +209,12 @@ final class CollectorManager {
             try fileManager.writeConfig(config, to: collector.configPath)
         } catch {
             self.handleError(error, context: "Failed to write config")
-            // TODO: Show error to user
         }
     }
     
-    func getCollectorReleases(repo: String, forceRefresh: Bool = false, completion: @escaping () -> Void = {}) {
+    func getCollectorReleases(repo: String, forceRefresh: Bool = false, completion: @escaping () -> Void = {}) async {
         isLoadingReleases = true
-        releaseManager.getCollectorReleases(repo: repo, forceRefresh: forceRefresh) { [weak self] in
+        await releaseManager.getCollectorReleases(repo: repo, forceRefresh: forceRefresh) { [weak self] in
             Task { @MainActor in
                 self?.isLoadingReleases = false
                 completion()
@@ -254,10 +239,6 @@ final class CollectorManager {
         } catch {
             self.handleError(error, context: "Failed to apply template")
         }
-    }
-    
-    func getMetricsManager() -> MetricsManager {
-        return metricsManager
     }
     
     func refreshCollectorComponents(withId id: UUID) async throws {

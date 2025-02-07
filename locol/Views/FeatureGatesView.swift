@@ -184,12 +184,6 @@ struct FeatureGatesView: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            SearchField("Search feature gates", text: Binding(
-                get: { viewModel.searchText },
-                set: { viewModel.searchText = $0 }
-            ))
-            .controlSize(.large)
-            
             if viewModel.isLoadingGates {
                 ProgressView()
                     .frame(maxWidth: .infinity, alignment: .center)
@@ -251,34 +245,3 @@ struct FeatureGatesView: View {
         }
     }
 }
-
-struct SearchField: View {
-    let placeholder: String
-    @Binding var text: String
-    
-    init(_ placeholder: String, text: Binding<String>) {
-        self.placeholder = placeholder
-        self._text = text
-    }
-    
-    var body: some View {
-        HStack {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
-            
-            TextField(placeholder, text: $text)
-                .textFieldStyle(.plain)
-            
-            if !text.isEmpty {
-                Button(action: { text = "" }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(8)
-        .background(Color(NSColor.controlBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-} 

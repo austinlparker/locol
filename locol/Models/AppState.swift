@@ -21,17 +21,14 @@ final class AppState {
     private let releaseManager: ReleaseManager
     private let downloadManager: DownloadManager
     private let processManager: ProcessManager
-    let metricsManager: MetricsManager
     
     init(
         fileManager: CollectorFileManager = CollectorFileManager(),
         releaseManager: ReleaseManager = ReleaseManager(),
-        metricsManager: MetricsManager = MetricsManager(),
         processManager: ProcessManager? = nil
     ) {
         self.fileManager = fileManager
         self.releaseManager = releaseManager
-        self.metricsManager = metricsManager
         self.downloadManager = DownloadManager(fileManager: fileManager)
         self.processManager = processManager ?? ProcessManager(fileManager: fileManager)
         self.dataExplorer = DataExplorer.shared
@@ -155,11 +152,6 @@ final class AppState {
             updateCollector(updatedCollector)
             runningCollector = updatedCollector
             
-            // Start metrics scraping
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            await MainActor.run {
-                self.metricsManager.startScraping()
-            }
         } catch {
             handleError(error, context: "Failed to start collector")
         }
@@ -167,9 +159,7 @@ final class AppState {
     
     func stopCollector(withId id: UUID) {
         guard let collector = getCollector(withId: id) else { return }
-        
-        metricsManager.stopScraping()
-        
+                
         do {
             try processManager.stopCollector()
             
