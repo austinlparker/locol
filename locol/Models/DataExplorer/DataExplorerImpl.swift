@@ -23,18 +23,6 @@ final class DataExplorer: DataExplorerProtocol {
     }
     var error: Error?
     
-    // Model data
-    @MainActor private(set) var metrics: [MetricRow] = []
-    @MainActor private(set) var logs: [LogRow] = []
-    @MainActor private(set) var spans: [SpanRow] = []
-    @MainActor private(set) var resources: [ResourceRow] = []
-    
-    // Helper computed properties
-    @MainActor var metricColumns: [String] { metrics.map(\.name) }
-    @MainActor var logColumns: [String] { logs.map { $0.timestamp.formatted() } }
-    @MainActor var spanColumns: [String] { spans.map(\.name) }
-    @MainActor var resourceColumns: [String] { resources.map(\.id) }
-    
     private init() {
         // Initialize with default port
         serverPort = 49152
@@ -192,7 +180,6 @@ final class DataExplorer: DataExplorerProtocol {
                             }
                         }
                     }
-                    await refreshResources()
                 case .metrics(let metricsRequest):
                     for resourceMetrics in metricsRequest.resourceMetrics {
                         let resource = resourceMetrics.resource
@@ -205,7 +192,6 @@ final class DataExplorer: DataExplorerProtocol {
                             }
                         }
                     }
-                    await refreshResources()
                 case .logs(let logsRequest):
                     for resourceLogs in logsRequest.resourceLogs {
                         let resource = resourceLogs.resource
@@ -218,7 +204,6 @@ final class DataExplorer: DataExplorerProtocol {
                             }
                         }
                     }
-                    await refreshResources()
                 case .profiles(let profilesRequest):
                     self.logger.debug("Received profiles request")
                     // TODO: Implement profile handling if needed
@@ -270,27 +255,20 @@ final class DataExplorer: DataExplorerProtocol {
         return scopeId
     }
     
-    @MainActor
-    private func refreshAll() async {
-        metrics = (try? await metricsHandler.getMetrics(forResourceIds: resources.map(\.id))) ?? []
-        logs = (try? await logsHandler.getLogs(forResourceIds: resources.map(\.id))) ?? []
-        spans = (try? await spansHandler.getSpans(forResourceIds: resources.map(\.id))) ?? []
-        resources = (try? await resourceHandler.getResourceGroups().flatMap { $0.resourceIds }.map { id in
-            ResourceRow(id: id, timestamp: Date(), droppedAttributesCount: 0, attributes: [])
-        }) ?? []
-    }
-    
-    @MainActor
-    private func refreshResources() async {
-        resources = (try? await resourceHandler.getResourceGroups().flatMap { $0.resourceIds }.map { id in
-            ResourceRow(id: id, timestamp: Date(), droppedAttributesCount: 0, attributes: [])
-        }) ?? []
-    }
-    
     // MARK: - DataExplorerProtocol
     
+    var metrics: [MetricRow] { [] }
+    var logs: [LogRow] { [] }
+    var spans: [SpanRow] { [] }
+    var resources: [ResourceRow] { [] }
+    
+    var metricColumns: [String] { [] }
+    var logColumns: [String] { [] }
+    var spanColumns: [String] { [] }
+    var resourceColumns: [String] { [] }
+    
     func getResourceGroups() async -> [ResourceAttributeGroup] {
-        (try? await resourceHandler.getResourceGroups()) ?? []
+        []
     }
     
     func getResourceIds(forGroup group: ResourceAttributeGroup) async -> [String] {
@@ -298,18 +276,18 @@ final class DataExplorer: DataExplorerProtocol {
     }
     
     func getMetrics(forResourceIds resourceIds: [String]) async -> [MetricRow] {
-        (try? await metricsHandler.getMetrics(forResourceIds: resourceIds)) ?? []
+        []
     }
     
     func getLogs(forResourceIds resourceIds: [String]) async -> [LogRow] {
-        (try? await logsHandler.getLogs(forResourceIds: resourceIds)) ?? []
+        []
     }
     
     func getSpans(forResourceIds resourceIds: [String]) async -> [SpanRow] {
-        (try? await spansHandler.getSpans(forResourceIds: resourceIds)) ?? []
+        []
     }
     
-    func executeQuery(_ query: String) async throws -> [String: [Any]] {
+    func executeQuery(_ query: String) async throws -> ResultSet {
         try await database.executeQuery(query)
     }
 } 

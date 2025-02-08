@@ -1,4 +1,5 @@
 import Foundation
+import DuckDB
 
 protocol DataExplorerProtocol {
     var isRunning: Bool { get }
@@ -29,5 +30,5 @@ protocol DataExplorerProtocol {
     func getSpans(forResourceIds resourceIds: [String]) async -> [SpanRow]
     
     // Query execution
-    func executeQuery(_ query: String) async throws -> [String: [Any]]
+    func executeQuery(_ query: String) async throws -> ResultSet
 } 

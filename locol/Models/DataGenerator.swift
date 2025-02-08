@@ -299,6 +299,7 @@ final class DataGeneratorManager {
     private let fileManager = CollectorFileManager.shared
     private let configKey = "DataGeneratorConfig"
     private let githubAPI = "https://api.github.com/repos/krzko/otelgen/releases/latest"
+    private let dataExplorer = DataExplorer.shared
     
     private var architecture: String {
         #if arch(arm64)
@@ -323,6 +324,23 @@ final class DataGeneratorManager {
         if !FileManager.default.fileExists(atPath: fileManager.dataGeneratorPath.path) {
             needsDownload = true
         }
+        
+        // Update endpoint with current DataExplorer port
+        updateEndpoint()
+        
+        // Observe DataExplorer port changes
+        Task {
+            for await _ in dataExplorer.objectWillChange.values {
+                await MainActor.run {
+                    updateEndpoint()
+                }
+            }
+        }
+    }
+    
+    private func updateEndpoint() {
+        // Update the endpoint to use the current DataExplorer port
+        config.endpoint = "localhost:\(dataExplorer.serverPort)"
     }
     
     private func saveConfig() {
@@ -461,6 +479,9 @@ final class DataGeneratorManager {
             needsDownload = true
             return
         }
+        
+        // Update endpoint to use current DataExplorer port
+        updateEndpoint()
         
         let arguments = config.toArguments()
         

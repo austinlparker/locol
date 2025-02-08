@@ -40,10 +40,9 @@ final class ResourceHandler {
         """
         
         let result = try await database.executeQuery(query)
-        let existingIds = result["attribute_id"] as? [String] ?? []
-        
         let attributeId: String
-        if let existingId = existingIds.first {
+        
+        if result.rowCount > 0, let existingId = result[0][0] as? String {
             // Use existing attribute
             attributeId = existingId
         } else {
@@ -79,19 +78,11 @@ final class ResourceHandler {
         """
         
         let serviceResult = try await database.executeQuery(serviceQuery)
-        let serviceKeys = serviceResult["key"] as? [String] ?? []
-        let serviceValues = serviceResult["value"] as? [String] ?? []
-        
-        for i in 0..<serviceKeys.count {
-            let key = serviceKeys[i]
-            let value = serviceValues[i]
-            
+        for i in 0..<serviceResult.rowCount {
+            let key = serviceResult[0].cast(to: String.self)[i] ?? ""
+            let value = serviceResult[1].cast(to: String.self)[i] ?? ""
             let resourceIds = try await getResourceIds(forKey: key, value: value)
-            groups.append(ResourceAttributeGroup(
-                key: key,
-                value: value,
-                resourceIds: resourceIds
-            ))
+            groups.append(ResourceAttributeGroup(key: key, value: value, resourceIds: resourceIds))
         }
         
         // Then get all other attributes
@@ -102,19 +93,11 @@ final class ResourceHandler {
         """
         
         let otherResult = try await database.executeQuery(otherQuery)
-        let otherKeys = otherResult["key"] as? [String] ?? []
-        let otherValues = otherResult["value"] as? [String] ?? []
-        
-        for i in 0..<otherKeys.count {
-            let key = otherKeys[i]
-            let value = otherValues[i]
-            
+        for i in 0..<otherResult.rowCount {
+            let key = otherResult[0].cast(to: String.self)[i] ?? ""
+            let value = otherResult[1].cast(to: String.self)[i] ?? ""
             let resourceIds = try await getResourceIds(forKey: key, value: value)
-            groups.append(ResourceAttributeGroup(
-                key: key,
-                value: value,
-                resourceIds: resourceIds
-            ))
+            groups.append(ResourceAttributeGroup(key: key, value: value, resourceIds: resourceIds))
         }
         
         // Sort the groups in memory
@@ -144,6 +127,12 @@ final class ResourceHandler {
         """
         
         let result = try await database.executeQuery(query)
-        return (result["resource_id"] as? [String]) ?? []
+        var ids: [String] = []
+        for i in 0..<result.rowCount {
+            if let id = result[0].cast(to: String.self)[i] {
+                ids.append(id)
+            }
+        }
+        return ids
     }
 } 

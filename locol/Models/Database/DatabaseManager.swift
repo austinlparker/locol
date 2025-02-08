@@ -54,38 +54,13 @@ final class DatabaseManager: DatabaseProtocol {
         }
     }
     
-    func executeQuery(_ query: String) async throws -> [String: [Any]] {
+    func executeQuery(_ query: String) async throws -> ResultSet {
         guard let connection = connection else {
             throw DatabaseError.connectionFailed
         }
         
         do {
-            let result = try connection.query(query)
-            var data: [String: [Any]] = [:]
-            
-            // Get column names and data
-            for i in 0..<result.columnCount {
-                let column = result[i]
-                let name = column.name
-                let dbType = column.underlyingDatabaseType
-                
-                switch dbType {
-                case .date, .timestamp, .timestampS, .timestampMS, .timestampNS:
-                    data[name] = column.cast(to: Foundation.Date.self).compactMap { $0 }
-                case .double, .float:
-                    data[name] = column.cast(to: Double.self).compactMap { $0 }
-                case .integer:
-                    data[name] = column.cast(to: Int32.self).compactMap { $0 }
-                case .bigint:
-                    data[name] = column.cast(to: Int64.self).compactMap { $0 }
-                case .boolean:
-                    data[name] = column.cast(to: Bool.self).compactMap { $0 }
-                default:
-                    data[name] = column.cast(to: String.self).compactMap { $0 }
-                }
-            }
-            
-            return data
+            return try connection.query(query)
         } catch {
             throw DatabaseError.queryFailed(error.localizedDescription)
         }

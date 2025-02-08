@@ -1,4 +1,5 @@
 import SwiftUI
+import DuckDB
 
 struct ResourceRowView: View {
     let resourceId: String
@@ -65,15 +66,17 @@ struct ResourceRowView: View {
             let result = try await dataExplorer.executeQuery(query)
             
             // Extract data from result
-            let timestamps = result["timestamp"] as? [Date] ?? []
-            let droppedCounts = result["dropped_attributes_count"] as? [Int32] ?? []
-            let keys = result["key"] as? [String] ?? []
-            let values = result["value"] as? [String] ?? []
+            let timestamps = result.column(at: 0).cast(to: DuckDB.Timestamp.self).map { $0?.microseconds ?? 0 }.map { Date(timeIntervalSince1970: TimeInterval($0) / 1_000_000) }
+            let droppedCounts = result.column(at: 1).cast(to: Int32.self)
+            let keys = result.column(at: 2).cast(to: String.self)
+            let values = result.column(at: 3).cast(to: String.self)
             
             // Create attribute pairs
             var attributes: [(key: String, value: String)] = []
             for i in 0..<min(keys.count, values.count) {
-                attributes.append((key: keys[i], value: values[i]))
+                if let key = keys[UInt64(i)], let value = values[UInt64(i)] {
+                    attributes.append((key: key, value: value))
+                }
             }
             
             // Create resource
@@ -81,7 +84,7 @@ struct ResourceRowView: View {
                 resource = ResourceRow(
                     id: resourceId,
                     timestamp: timestamp,
-                    droppedAttributesCount: droppedCount,
+                    droppedAttributesCount: droppedCount ?? 0,
                     attributes: attributes
                 )
             }
