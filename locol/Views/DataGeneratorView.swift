@@ -35,13 +35,21 @@ struct DataGeneratorView: View {
             Spacer()
             
             if manager.isRunning {
-                Button(role: .destructive, action: manager.stopGenerator) {
+                Button(role: .destructive) {
+                    Task {
+                        await manager.stopGenerator()
+                    }
+                } label: {
                     Label("Stop Generator", systemImage: "stop.circle.fill")
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(.red)
             } else {
-                Button(action: manager.startGenerator) {
+                Button {
+                    Task {
+                        await manager.startGenerator()
+                    }
+                } label: {
                     Label("Start Generator", systemImage: "play.circle.fill")
                 }
                 .buttonStyle(.borderedProminent)

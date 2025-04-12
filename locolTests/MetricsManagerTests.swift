@@ -2,7 +2,7 @@ import XCTest
 import Combine
 @testable import locol
 
-class MockURLSession: URLSession {
+class MockURLSession: URLSession, @unchecked Sendable {
     var mockData: Data?
     var mockResponse: URLResponse?
     var mockError: Error?
@@ -14,11 +14,13 @@ class MockURLSession: URLSession {
     }
 }
 
-class MockURLSessionDataTask: URLSessionDataTask {
+class MockURLSessionDataTask: URLSessionDataTask, @unchecked Sendable {
     private let closure: () -> Void
     
     init(closure: @escaping () -> Void) {
         self.closure = closure
+        // Use super.init with a mock session to avoid deprecation warning
+        super.init()
     }
     
     override func resume() {
@@ -151,7 +153,7 @@ final class MetricsManagerTests: XCTestCase {
         XCTAssertEqual(manager.metrics[counterKey]?.last?.value, 100)
     }
     
-    func testHistogramProcessing() throws {
+    func testHistogramProcessing() {
         let metricsData = """
             # HELP request_duration Request duration
             # TYPE request_duration histogram
@@ -163,8 +165,8 @@ final class MetricsManagerTests: XCTestCase {
             request_duration_count 6
             """
         
-        // Process metrics
-        try manager.processMetrics(metricsData)
+        // Process metrics - this can't fail since we're providing valid data
+        try! manager.processMetrics(metricsData)
         
         let key = manager.metricKey(name: "request_duration", labels: [:])
         let metrics = manager.metrics[key]
@@ -189,7 +191,7 @@ final class MetricsManagerTests: XCTestCase {
         XCTAssertEqual(histogram.count, 6, "Count should be 6")
     }
     
-    func testHistogramProcessingWithLabels() throws {
+    func testHistogramProcessingWithLabels() {
         let expectation = XCTestExpectation(description: "Labeled histogram should be processed")
         
         let metricsData = """
@@ -203,7 +205,8 @@ final class MetricsManagerTests: XCTestCase {
             http_request_duration_seconds_count{method="GET",path="/api/v1/users"} 40
             """
         
-        try manager.processMetrics(metricsData)
+        // Can't fail with valid data
+        try! manager.processMetrics(metricsData)
         
         let key = manager.metricKey(name: "http_request_duration_seconds", labels: ["method": "GET", "path": "/api/v1/users"])
         let metrics = manager.metrics[key]

@@ -445,7 +445,7 @@ class DataGeneratorManager: ObservableObject {
         }
     }
     
-    func startGenerator() {
+    func startGenerator() async {
         guard !isRunning else {
             Logger.app.warning("Attempted to start generator while already running")
             return
@@ -456,8 +456,10 @@ class DataGeneratorManager: ObservableObject {
         // Check if binary exists and is executable
         guard FileManager.default.fileExists(atPath: binary) else {
             Logger.app.error("Data generator binary not found at \(binary)")
-            status = "Error: Data generator binary not found"
-            needsDownload = true
+            await MainActor.run {
+                status = "Error: Data generator binary not found"
+                needsDownload = true
+            }
             return
         }
         
@@ -466,39 +468,50 @@ class DataGeneratorManager: ObservableObject {
         Logger.app.info("Starting data generator with arguments: \(arguments)")
         
         do {
-            try processManager.start(
+            try await processManager.start(
                 binary: binary,
                 arguments: arguments,
                 outputHandler: { [weak self] output in
                     guard let self = self else { return }
-                    self.status = output
-                    self.logger.info(output)
+                    Task { @MainActor in
+                        self.status = output
+                        self.logger.info(output)
+                    }
                 },
                 onTermination: { [weak self] in
                     guard let self = self else { return }
-                    self.isRunning = false
-                    self.status = "Generator stopped"
-                    Logger.app.info("Data generator terminated")
+                    Task { @MainActor in
+                        self.isRunning = false
+                        self.status = "Generator stopped"
+                        Logger.app.info("Data generator terminated")
+                    }
                 }
             )
             
-            isRunning = true
+            await MainActor.run {
+                isRunning = true
+            }
             Logger.app.info("Data generator started successfully")
         } catch {
             Logger.app.error("Failed to start data generator: \(error.localizedDescription)")
-            self.status = "Failed to start generator: \(error.localizedDescription)"
+            await MainActor.run {
+                self.status = "Failed to start generator: \(error.localizedDescription)"
+            }
         }
     }
     
-    func stopGenerator() {
+    func stopGenerator() async {
         guard isRunning else {
             Logger.app.warning("Attempted to stop generator while not running")
             return
         }
         
-        processManager.stop()
-        isRunning = false
-        status = "Generator stopped"
+        await processManager.stop()
+        
+        await MainActor.run {
+            isRunning = false
+            status = "Generator stopped"
+        }
         Logger.app.info("Data generator stopped")
     }
     
@@ -509,7 +522,12 @@ class DataGeneratorManager: ObservableObject {
     
     deinit {
         if isRunning {
-            stopGenerator()
+            // We can't use async in deinit, so we'll detach a separate task
+            // Avoid capturing self in the task to prevent Swift 6 errors
+            let localProcessManager = processManager
+            Task.detached {
+                await localProcessManager.stop()
+            }
         }
     }
     

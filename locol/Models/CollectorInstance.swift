@@ -1,6 +1,6 @@
 import Foundation
 
-struct CollectorInstance: Codable, Identifiable {
+struct CollectorInstance: Codable, Identifiable, Hashable {
     let id: UUID
     let name: String
     let version: String
@@ -27,5 +27,15 @@ struct CollectorInstance: Codable, Identifiable {
         self.pid = pid
         self.startTime = startTime
         self.components = components
+    }
+    
+    // MARK: - Equatable & Hashable
+    
+    static func == (lhs: CollectorInstance, rhs: CollectorInstance) -> Bool {
+        return lhs.id == rhs.id
+    }
+    
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
     }
 } 

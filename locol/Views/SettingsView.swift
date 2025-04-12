@@ -401,7 +401,6 @@ struct SearchField: View {
 struct CollectorDetailView: View {
     let collector: CollectorInstance
     let manager: CollectorManager
-    @Environment(\.openWindow) private var openWindow
     
     var body: some View {
         ScrollView {
@@ -418,16 +417,19 @@ struct CollectorDetailView: View {
                     }
                 )
                 
-                // Action buttons
-                HStack(spacing: 8) {
-                    Button("Edit Config") {
-                        openWindow(id: "ConfigEditorWindow", value: collector.id)
-                    }
+                // Tabs for Configuration and Metrics
+                TabView {
+                    ConfigEditorView(manager: manager, collectorId: collector.id)
+                        .tabItem {
+                            Label("Configuration", systemImage: "gear")
+                        }
                     
-                    Button("View Metrics & Logs") {
-                        openWindow(id: "MetricsLogViewerWindow", value: collector.id)
-                    }
+                    MetricsLogView(collector: collector, manager: manager)
+                        .tabItem {
+                            Label("Metrics & Logs", systemImage: "chart.bar")
+                        }
                 }
+                .frame(height: 400)
                 
                 Divider()
                 

@@ -44,8 +44,13 @@ class AppState: ObservableObject {
     }
     
     private func saveState() {
-        if let encoded = try? JSONEncoder().encode(collectors) {
+        do {
+            let encoded = try JSONEncoder().encode(collectors)
             UserDefaults.standard.set(encoded, forKey: stateKey)
+        } catch {
+            logger.error("Failed to save app state: \(error.localizedDescription)")
+            // Consider implementing a backup mechanism or recovery procedure
+            // or notifying the user of the error
         }
     }
 } 

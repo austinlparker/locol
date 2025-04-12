@@ -1,10 +1,11 @@
 import Foundation
 import Subprocess
 
-class DataGeneratorProcess {
+actor DataGeneratorProcess {
     static let shared = DataGeneratorProcess()
     private var activeSubprocess: Subprocess?
-    private var onTermination: (() -> Void)?
+    private var terminationCallback: (() -> Void)?
+    private var hasTerminated = false
     
     private init() {}
     
@@ -15,10 +16,12 @@ class DataGeneratorProcess {
     func start(
         binary: String,
         arguments: [String],
-        outputHandler: @escaping (String) -> Void,
-        onTermination: @escaping () -> Void
+        outputHandler: @escaping @Sendable (String) -> Void,
+        onTermination: @escaping @Sendable () -> Void
     ) throws {
-        self.onTermination = onTermination
+        // Reset state
+        hasTerminated = false
+        terminationCallback = onTermination
         
         // Build command array with binary as first argument
         var command = [binary]
@@ -30,22 +33,22 @@ class DataGeneratorProcess {
         try process.launch(
             outputHandler: { data in
                 if let output = String(data: data, encoding: .utf8) {
-                    DispatchQueue.main.async {
+                    Task { @MainActor in
                         outputHandler(output)
                     }
                 }
             },
             errorHandler: { data in
                 if let output = String(data: data, encoding: .utf8) {
-                    DispatchQueue.main.async {
+                    Task { @MainActor in
                         outputHandler(output)
                     }
                 }
             },
             terminationHandler: { [weak self] _ in
-                DispatchQueue.main.async {
-                    self?.activeSubprocess = nil
-                    self?.onTermination?()
+                Task {
+                    guard let self = self else { return }
+                    await self.handleTermination()
                 }
             }
         )
@@ -54,8 +57,29 @@ class DataGeneratorProcess {
     }
     
     func stop() {
-        activeSubprocess?.kill()
+        if let process = activeSubprocess {
+            process.kill()
+            activeSubprocess = nil
+            callTerminationCallback()
+        }
+    }
+    
+    private func handleTermination() {
         activeSubprocess = nil
-        onTermination?()
+        callTerminationCallback()
+    }
+    
+    private func callTerminationCallback() {
+        if !hasTerminated {
+            hasTerminated = true
+            
+            // Capture the callback before switching to main actor
+            if let callback = terminationCallback {
+                // Dispatch to main thread for UI updates
+                Task { @MainActor in
+                    callback()
+                }
+            }
+        }
     }
 } 

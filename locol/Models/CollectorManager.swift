@@ -1,23 +1,24 @@
-//
-//  CollectorManager.swift
-//  locol
-//
-//  Created by Austin Parker on 1/12/25.
-//
-
 import Foundation
 import Combine
 import Subprocess
 import os
+import AppKit
 
+// A cleaner implementation that properly handles actor isolation
+@MainActor
 class CollectorManager: ObservableObject {
+    static let shared = CollectorManager()
+    
+    // Published properties for UI updates
     @Published private(set) var isDownloading: Bool = false
     @Published private(set) var isLoadingReleases: Bool = false
     @Published var downloadProgress: Double = 0.0
     @Published var downloadStatus: String = ""
     @Published private(set) var activeCollector: CollectorInstance? = nil
+    @Published private(set) var isProcessingOperation: Bool = false
     
-    private var metricsManager = MetricsManager.shared
+    // Core services
+    private let metricsManager = MetricsManager.shared
     private var cancellables = Set<AnyCancellable>()
     
     let fileManager: CollectorFileManager
@@ -25,6 +26,9 @@ class CollectorManager: ObservableObject {
     let downloadManager: DownloadManager
     let appState: AppState
     let processManager: ProcessManager
+    
+    // Logger for error handling
+    private let logger = Logger.app
     
     init() {
         self.fileManager = CollectorFileManager()
@@ -56,7 +60,18 @@ class CollectorManager: ObservableObject {
             self?.objectWillChange.send()
         }
         .store(in: &cancellables)
+        
+        // Register for application termination notification
+        NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)
+            .sink { [weak self] _ in
+                Task {
+                    await self?.cleanupOnTermination()
+                }
+            }
+            .store(in: &cancellables)
     }
+    
+    // MARK: - Public Accessors
     
     var availableReleases: [Release] {
         releaseManager.availableReleases
@@ -65,6 +80,8 @@ class CollectorManager: ObservableObject {
     var collectors: [CollectorInstance] {
         appState.collectors
     }
+    
+    // MARK: - Collector Management
     
     func addCollector(name: String, version: String, release: Release, asset: ReleaseAsset) {
         isDownloading = true
@@ -90,127 +107,165 @@ class CollectorManager: ObservableObject {
             downloadManager.downloadAsset(releaseAsset: asset, name: name, version: version, binaryPath: binaryPath, configPath: configPath) { [weak self] result in
                 guard let self = self else { return }
                 
-                switch result {
-                case .success((let binaryPath, let configPath)):
-                    let collector = CollectorInstance(
-                        name: name,
-                        version: version,
-                        binaryPath: binaryPath,
-                        configPath: configPath
-                    )
-                    self.appState.addCollector(collector)
-                    
-                    // Get component information
-                    Task {
-                        do {
-                            await MainActor.run {
+                DispatchQueue.main.async {
+                    switch result {
+                    case .success((let binaryPath, let configPath)):
+                        let collector = CollectorInstance(
+                            name: name,
+                            version: version,
+                            binaryPath: binaryPath,
+                            configPath: configPath
+                        )
+                        self.appState.addCollector(collector)
+                        
+                        // Get component information
+                        Task {
+                            do {
                                 self.downloadStatus = "Getting component information..."
-                            }
-                            let components = try await self.processManager.getCollectorComponents(collector)
-                            await MainActor.run {
-                                var updatedCollector = collector
-                                updatedCollector.components = components
-                                self.appState.updateCollector(updatedCollector)
-                                self.isDownloading = false
-                                self.downloadProgress = 0.0
-                                self.downloadStatus = ""
-                            }
-                        } catch {
-                            self.handleError(error, context: "Failed to get collector components")
-                            await MainActor.run {
-                                self.isDownloading = false
-                                self.downloadProgress = 0.0
-                                self.downloadStatus = ""
+                                let components = try await self.processManager.getCollectorComponents(collector)
+                                
+                                await MainActor.run {
+                                    var updatedCollector = collector
+                                    updatedCollector.components = components
+                                    self.appState.updateCollector(updatedCollector)
+                                    self.isDownloading = false
+                                    self.downloadProgress = 0.0
+                                    self.downloadStatus = ""
+                                }
+                            } catch {
+                                await MainActor.run {
+                                    self.handleError(error, context: "Failed to get collector components")
+                                    self.isDownloading = false
+                                    self.downloadProgress = 0.0
+                                    self.downloadStatus = ""
+                                }
                             }
                         }
+                    case .failure(let error):
+                        self.handleError(error, context: "Failed to download collector")
+                        // Clean up the directory on failure
+                        try? self.fileManager.deleteCollector(name: name)
+                        self.isDownloading = false
+                        self.downloadProgress = 0.0
+                        self.downloadStatus = ""
                     }
-                case .failure(let error):
-                    self.handleError(error, context: "Failed to download collector")
-                    // Clean up the directory on failure
-                    try? self.fileManager.deleteCollector(name: name)
-                    self.isDownloading = false
-                    self.downloadProgress = 0.0
-                    self.downloadStatus = ""
                 }
             }
         } catch {
-            self.handleError(error, context: "Failed to create collector directory")
-            isDownloading = false
-            downloadProgress = 0.0
-            downloadStatus = ""
-            return
+            DispatchQueue.main.async {
+                self.handleError(error, context: "Failed to create collector directory")
+                self.isDownloading = false
+                self.downloadProgress = 0.0
+                self.downloadStatus = ""
+            }
         }
     }
     
     func removeCollector(withId id: UUID) {
         guard let collector = appState.getCollector(withId: id) else { return }
         
-        // If this is the active collector, stop it first
-        if activeCollector?.id == id {
-            stopCollector(withId: id)
-        }
-        
-        appState.removeCollector(withId: id)
-        
-        do {
-            try fileManager.deleteCollector(name: collector.name)
-        } catch {
-            self.handleError(error, context: "Failed to delete collector")
-            // TODO: Show error to user
+        DispatchQueue.main.async {
+            // If this is the active collector, stop it first
+            if self.activeCollector?.id == id {
+                self.stopCollector(withId: id)
+            }
+            
+            self.appState.removeCollector(withId: id)
+            
+            do {
+                try self.fileManager.deleteCollector(name: collector.name)
+            } catch {
+                self.handleError(error, context: "Failed to delete collector")
+            }
         }
     }
     
     func startCollector(withId id: UUID) {
         guard let collector = appState.getCollector(withId: id) else { return }
         
-        do {
-            try processManager.startCollector(collector)
-            
-            // Update collector state
-            var updatedCollector = collector
-            updatedCollector.isRunning = true
-            updatedCollector.pid = Int(processManager.activeCollector?.process.pid ?? 0)
-            updatedCollector.startTime = Date()
-            appState.updateCollector(updatedCollector)
-            activeCollector = updatedCollector
-            
-            // Start metrics manager
-            DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                // Give the collector time to start up before scraping metrics
-                self.metricsManager.startScraping()
+        // Show processing status
+        DispatchQueue.main.async {
+            self.isProcessingOperation = true
+        }
+        
+        // Use Task for async operation
+        Task {
+            do {
+                // Start collector with async/await
+                try await processManager.startCollector(collector)
+                
+                // Update UI on main thread
+                await MainActor.run {
+                    // Update collector state
+                    var updatedCollector = collector
+                    updatedCollector.isRunning = true
+                    updatedCollector.pid = Int(processManager.getActiveProcess()?.pid ?? 0)
+                    updatedCollector.startTime = Date()
+                    appState.updateCollector(updatedCollector)
+                    activeCollector = updatedCollector
+                    isProcessingOperation = false
+                    
+                    // Start metrics manager after a short delay
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
+                        self.metricsManager.startScraping()
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    self.handleError(error, context: "Failed to start collector")
+                    self.isProcessingOperation = false
+                }
             }
-        } catch {
-            self.handleError(error, context: "Failed to start collector")
         }
     }
     
     func stopCollector(withId id: UUID) {
         guard let collector = appState.getCollector(withId: id) else { return }
         
-        // Stop metrics manager first
-        metricsManager.stopScraping()
+        // Show processing status
+        DispatchQueue.main.async {
+            self.isProcessingOperation = true
+        }
         
-        // Then stop the collector
-        do {
-            try processManager.stopCollector()
+        // Use Task for async operation
+        Task {
+            // Stop metrics manager first
+            await MainActor.run {
+                metricsManager.stopScraping()
+            }
             
-            // Update collector state
-            var updatedCollector = collector
-            updatedCollector.isRunning = false
-            updatedCollector.pid = nil
-            updatedCollector.startTime = nil
-            appState.updateCollector(updatedCollector)
-            activeCollector = nil
-        } catch ProcessError.notRunning {
-            // If the process isn't running, just update the state
-            var updatedCollector = collector
-            updatedCollector.isRunning = false
-            updatedCollector.pid = nil
-            updatedCollector.startTime = nil
-            appState.updateCollector(updatedCollector)
-            activeCollector = nil
-        } catch {
-            self.handleError(error, context: "Failed to stop collector")
+            do {
+                // Then stop the collector
+                try await processManager.stopCollector()
+                
+                // Update UI on main thread
+                await MainActor.run {
+                    // Update collector state
+                    var updatedCollector = collector
+                    updatedCollector.isRunning = false
+                    updatedCollector.pid = nil
+                    updatedCollector.startTime = nil
+                    appState.updateCollector(updatedCollector)
+                    activeCollector = nil
+                    isProcessingOperation = false
+                }
+            } catch ProcessError.notRunning {
+                // If the process isn't running, just update the state
+                await MainActor.run {
+                    var updatedCollector = collector
+                    updatedCollector.isRunning = false
+                    updatedCollector.pid = nil
+                    updatedCollector.startTime = nil
+                    appState.updateCollector(updatedCollector)
+                    activeCollector = nil
+                    isProcessingOperation = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.handleError(error, context: "Failed to stop collector")
+                    self.isProcessingOperation = false
+                }
+            }
         }
     }
     
@@ -225,20 +280,27 @@ class CollectorManager: ObservableObject {
         do {
             try fileManager.writeConfig(config, to: collector.configPath)
         } catch {
-            self.handleError(error, context: "Failed to write config")
-            // TODO: Show error to user
+            DispatchQueue.main.async {
+                self.handleError(error, context: "Failed to write config")
+            }
         }
     }
     
     func updateCollectorFlags(withId id: UUID, flags: String) {
         guard let collector = appState.getCollector(withId: id) else { return }
-        var updatedCollector = collector
-        updatedCollector.commandLineFlags = flags
-        appState.updateCollector(updatedCollector)
+        
+        DispatchQueue.main.async {
+            var updatedCollector = collector
+            updatedCollector.commandLineFlags = flags
+            self.appState.updateCollector(updatedCollector)
+        }
     }
     
     func getCollectorReleases(repo: String, forceRefresh: Bool = false, completion: @escaping () -> Void = {}) {
-        isLoadingReleases = true
+        DispatchQueue.main.async {
+            self.isLoadingReleases = true
+        }
+        
         releaseManager.getCollectorReleases(repo: repo, forceRefresh: forceRefresh) { [weak self] in
             DispatchQueue.main.async {
                 self?.isLoadingReleases = false
@@ -251,7 +313,9 @@ class CollectorManager: ObservableObject {
         do {
             return try fileManager.listConfigTemplates()
         } catch {
-            self.handleError(error, context: "Failed to list config templates")
+            DispatchQueue.main.async {
+                self.handleError(error, context: "Failed to list config templates")
+            }
             return []
         }
     }
@@ -262,7 +326,9 @@ class CollectorManager: ObservableObject {
         do {
             try fileManager.applyConfigTemplate(named: templateName, to: collector.configPath)
         } catch {
-            self.handleError(error, context: "Failed to apply template")
+            DispatchQueue.main.async {
+                self.handleError(error, context: "Failed to apply template")
+            }
         }
     }
     
@@ -272,15 +338,41 @@ class CollectorManager: ObservableObject {
     
     func refreshCollectorComponents(withId id: UUID) async throws {
         guard let collector = appState.getCollector(withId: id) else { return }
+        
         let components = try await processManager.getCollectorComponents(collector)
-        var updatedCollector = collector
-        updatedCollector.components = components
-        appState.updateCollector(updatedCollector)
+        
+        await MainActor.run {
+            var updatedCollector = collector
+            updatedCollector.components = components
+            appState.updateCollector(updatedCollector)
+        }
+    }
+    
+    // MARK: - Private Functions
+    
+    // Centralized cleanup method that uses async/await
+    private func cleanupOnTermination() async {
+        logger.info("Application terminating, stopping all collectors")
+        
+        // Copy collectors to avoid potential mutation during iteration
+        let collectorsToStop = collectors.filter { $0.isRunning }
+        
+        // Stop all running collectors
+        for collector in collectorsToStop {
+            do {
+                try await processManager.stopCollector()
+                logger.info("Successfully stopped collector: \(collector.name)")
+            } catch {
+                logger.error("Failed to stop collector \(collector.name): \(error.localizedDescription)")
+            }
+        }
+        
+        logger.info("All collectors cleanup complete")
     }
     
     // Update error logging to use system logger
     private func handleError(_ error: Error, context: String) {
-        Logger.app.error("\(context): \(error.localizedDescription)")
+        logger.error("\(context): \(error.localizedDescription)")
     }
 }
 

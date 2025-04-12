@@ -107,7 +107,7 @@ private struct BucketChart: View {
                 if let selectedPoint = selectedPoint {
                     BaseTooltip {
                         VStack(alignment: .leading, spacing: 4) {
-                            if let index = histogram.nonInfiniteBuckets.firstIndex(where: { $0.id == selectedPoint.bucket.id }) {
+                            if histogram.nonInfiniteBuckets.contains(where: { $0.id == selectedPoint.bucket.id }) {
                                 Text("\(formatBucketLabel(selectedPoint.bucket.lowerBound)) - \(formatBucketLabel(selectedPoint.bucket.upperBound))")
                                     .font(.caption)
                             }

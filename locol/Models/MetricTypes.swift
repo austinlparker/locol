@@ -193,7 +193,7 @@ struct HistogramMetric {
         }
         
         // Find the bucket containing our target rank
-        var rank = 0.0
+        var lastRank = 0.0
         for (i, bucket) in sortedBuckets.enumerated() {
             if bucket.upperBound.isInfinite {
                 continue
@@ -214,7 +214,7 @@ struct HistogramMetric {
                 let bucketRank = (q - prevRank) / (nextRank - prevRank)
                 return prevBound + (bucket.upperBound - prevBound) * bucketRank
             }
-            rank = nextRank
+            lastRank = nextRank
         }
         
         // If we get here, return the highest finite bucket

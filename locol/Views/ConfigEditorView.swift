@@ -18,8 +18,8 @@ class ConfigEditorViewModel: ObservableObject {
     
     private var originalConfig: String = ""
     private let snippetManager: ConfigSnippetManager
-    private let manager: CollectorManager
-    private let collectorId: UUID
+    let manager: CollectorManager
+    let collectorId: UUID
     
     init(manager: CollectorManager, collectorId: UUID) {
         self.manager = manager
@@ -212,18 +212,34 @@ struct ConfigEditorView: View {
     }
     
     private var editorToolbar: some View {
-        HStack {
-            if viewModel.previewSnippet != nil {
-                Label("Preview Mode", systemImage: "eye")
-                    .font(.system(.body))
-                    .foregroundStyle(.secondary)
+        VStack(spacing: 8) {
+            // Main toolbar actions
+            HStack {
+                if viewModel.previewSnippet != nil {
+                    Label("Preview Mode", systemImage: "eye")
+                        .font(.system(.body))
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button(action: { viewModel.saveConfig() }) {
+                    Label("Save", systemImage: "square.and.arrow.down")
+                }
+                .keyboardShortcut("s", modifiers: .command)
+                .buttonStyle(.borderedProminent)
             }
-            Spacer()
-            Button(action: { viewModel.saveConfig() }) {
-                Label("Save", systemImage: "square.and.arrow.down")
+            
+            // File path display
+            if let collector = viewModel.manager.collectors.first(where: { $0.id == viewModel.collectorId }) {
+                HStack {
+                    Text("Config Path:")
+                        .foregroundStyle(.secondary)
+                    Text(collector.configPath)
+                        .font(.system(.caption, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                    Spacer()
+                }
             }
-            .keyboardShortcut("s", modifiers: .command)
-            .buttonStyle(.borderedProminent)
         }
         .padding(.horizontal)
         .padding(.vertical, 8)

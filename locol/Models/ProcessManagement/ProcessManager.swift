@@ -1,19 +1,40 @@
 import Foundation
 import Yams
 import Subprocess
+import os
 
-class ProcessManager: ObservableObject {
-    @Published private(set) var activeCollector: (id: UUID, process: Subprocess)? = nil
+// Protocol that defines process management contract
+// This allows us to replace direct process execution with XPC in the future
+@MainActor
+protocol ProcessManagementService {
+    var activeCollectorId: UUID? { get }
+    func startCollector(_ collector: CollectorInstance) async throws
+    func stopCollector() async throws
+    func isRunning(_ collector: CollectorInstance) -> Bool
+    func getCollectorComponents(_ collector: CollectorInstance) async throws -> ComponentList
+}
+
+@MainActor
+class ProcessManager: ObservableObject, ProcessManagementService {
+    @Published private(set) var activeProcess: Subprocess? = nil
+    
     private let fileManager: CollectorFileManager
+    private let logger = Logger.app
+    private var activeCollectorInfo: (id: UUID, name: String)? = nil
+    
+    var activeCollectorId: UUID? {
+        return activeCollectorInfo?.id
+    }
     
     init(fileManager: CollectorFileManager) {
         self.fileManager = fileManager
     }
     
-    func startCollector(_ collector: CollectorInstance) throws {
-        if activeCollector != nil {
+    func startCollector(_ collector: CollectorInstance) async throws {
+        // Check if we already have an active collector
+        if activeProcess != nil {
             // Stop the currently running collector first
-            try stopCollector()
+            try await stopCollector()
         }
         
         // Build command array
@@ -22,70 +43,85 @@ class ProcessManager: ObservableObject {
             command.append(contentsOf: collector.commandLineFlags.components(separatedBy: " "))
         }
         
+        // Launch process
         let process = Subprocess(command)
         process.environment = ["OTEL_LOG_LEVEL": "debug"]
         
-        // Launch process with output handling
-        try process.launch(
-            outputHandler: { data in
-                if let output = String(data: data, encoding: .utf8) {
-                    CollectorLogger.shared.debug("[\(collector.name)] \(output)")
-                }
-            },
-            errorHandler: { data in
-                if let output = String(data: data, encoding: .utf8) {
-                    CollectorLogger.shared.debug("[\(collector.name)] \(output)")
-                }
-            },
-            terminationHandler: { [weak self] process in
-                DispatchQueue.main.async {
-                    self?.handleProcessTermination(process)
-                }
-            }
-        )
+        // Capture collector name to avoid reference cycle
+        let collectorName = collector.name
         
-        // Set active collector immediately after successful launch
-        self.activeCollector = (id: collector.id, process: process)
-        
-        // Log success asynchronously
-        DispatchQueue.main.async {
-            CollectorLogger.shared.info("[\(collector.name)] Started collector process")
+        do {
+            try process.launch(
+                outputHandler: { [weak self] data in
+                    if let output = String(data: data, encoding: .utf8) {
+                        self?.logger.debug("[\(collectorName)] \(output)")
+                        CollectorLogger.shared.debug("[\(collectorName)] \(output)")
+                    }
+                },
+                errorHandler: { [weak self] data in
+                    if let output = String(data: data, encoding: .utf8) {
+                        self?.logger.debug("[\(collectorName)] \(output)")
+                        CollectorLogger.shared.debug("[\(collectorName)] \(output)")
+                    }
+                },
+                terminationHandler: { [weak self] process in
+                    guard let self = self else { return }
+                    Task { @MainActor in
+                        self.handleProcessTermination(process)
+                    }
+                }
+            )
+            
+            // Update state on main thread
+            // We're already on the main actor
+            self.activeProcess = process
+            self.activeCollectorInfo = (id: collector.id, name: collector.name)
+            
+            // Log success 
+            self.logger.info("[\(collectorName)] Started collector process")
+            
+        } catch {
+            throw error
         }
     }
     
-    func stopCollector() throws {
-        guard let active = activeCollector else {
+    func stopCollector() async throws {
+        guard let process = activeProcess else {
             throw ProcessError.notRunning
         }
         
         // Terminate process
-        active.process.kill()
+        process.kill()
         
-        // Wait for process to terminate
-        if active.process.isRunning {
-            Thread.sleep(forTimeInterval: 0.5) // Give it a moment to terminate gracefully
-            if active.process.isRunning {
-                // Force kill if still running
-                kill(Int32(active.process.pid), SIGKILL)
-            }
+        // Give it a moment to terminate gracefully
+        let timeout = DispatchTime.now() + .milliseconds(500)
+        
+        var isRunning = process.isRunning
+        while isRunning && DispatchTime.now() < timeout {
+            try? await Task.sleep(nanoseconds: 50_000_000) // 50ms
+            isRunning = process.isRunning
         }
         
-        // Handle termination synchronously since we're already in a blocking call
-        handleProcessTermination(active.process)
-        
-        // Log asynchronously
-        DispatchQueue.main.async {
-            CollectorLogger.shared.info("Stopped collector process")
+        if isRunning {
+            // Force kill if still running
+            kill(Int32(process.pid), SIGKILL)
         }
+        
+        // Handle termination on main thread for UI updates
+        // We're already on the main actor
+        handleProcessTermination(process)
+        logger.info("Stopped collector process")
     }
     
     func isRunning(_ collector: CollectorInstance) -> Bool {
-        guard let active = activeCollector, active.id == collector.id else { return false }
-        return active.process.isRunning
+        guard let process = activeProcess, activeCollectorInfo?.id == collector.id else { 
+            return false 
+        }
+        return process.isRunning
     }
     
     func getActiveProcess() -> Subprocess? {
-        return activeCollector?.process
+        return activeProcess
     }
     
     func getCollectorComponents(_ collector: CollectorInstance) async throws -> ComponentList {
@@ -95,19 +131,37 @@ class ProcessManager: ObservableObject {
     }
     
     private func handleProcessTermination(_ process: Subprocess) {
-        activeCollector = nil
+        // We're already on the main actor
+        activeProcess = nil
+        activeCollectorInfo = nil
         
         // Log termination status
         if process.exitCode != 0 {
+            logger.error("Process terminated with status: \(process.exitCode)")
             CollectorLogger.shared.error("Process terminated with status: \(process.exitCode)")
         }
     }
 }
 
-enum ProcessError: Error {
+enum ProcessError: Error, Equatable {
     case alreadyRunning
     case notRunning
     case configurationError(String)
     case startupError(String)
     case componentsFailed
-} 
+    
+    static func == (lhs: ProcessError, rhs: ProcessError) -> Bool {
+        switch (lhs, rhs) {
+        case (.alreadyRunning, .alreadyRunning),
+             (.notRunning, .notRunning),
+             (.componentsFailed, .componentsFailed):
+            return true
+        case let (.configurationError(lhsMsg), .configurationError(rhsMsg)):
+            return lhsMsg == rhsMsg
+        case let (.startupError(lhsMsg), .startupError(rhsMsg)):
+            return lhsMsg == rhsMsg
+        default:
+            return false
+        }
+    }
+}

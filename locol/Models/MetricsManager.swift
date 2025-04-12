@@ -8,7 +8,9 @@ class MetricsManager: ObservableObject {
     @Published private(set) var metrics: [String: [Metric]] = [:]
     @Published private(set) var lastError: String?
     
-    private var metricsCache: [String: [Metric]] = [:]
+    // Use CircularBuffer for more efficient metrics storage
+    private var metricsCache: [String: CircularBuffer<Metric>] = [:]
+    private let maxMetricsPerKey = 1000 // Limit storage to prevent unbounded growth
     private var updateTimer: Timer?
     private var scrapeTimer: Timer?
     private var histogramComponents: [String: (
@@ -217,7 +219,7 @@ class MetricsManager: ObservableObject {
             )
             
             if metricsCache[key] == nil {
-                metricsCache[key] = []
+                metricsCache[key] = CircularBuffer<Metric>(capacity: maxMetricsPerKey)
             }
             metricsCache[key]?.append(newMetric)
         }
@@ -302,7 +304,7 @@ class MetricsManager: ObservableObject {
             )
             
             if metricsCache[key] == nil {
-                metricsCache[key] = []
+                metricsCache[key] = CircularBuffer<Metric>(capacity: maxMetricsPerKey)
             }
             metricsCache[key]?.append(metric)
             histogramComponents.removeValue(forKey: key)
@@ -315,17 +317,31 @@ class MetricsManager: ObservableObject {
     private func publishUpdates() {
         // Since we're already on the main thread in processMetrics, 
         // we don't need to dispatch again
-        metrics = metricsCache
+        
+        // Convert CircularBuffer to Array for published metrics
+        var publishedMetrics: [String: [Metric]] = [:]
+        for (key, buffer) in metricsCache {
+            publishedMetrics[key] = Array(buffer)
+        }
+        metrics = publishedMetrics
     }
     
     private func cleanupOldValues() {        
+        // With CircularBuffer, we don't need explicit cleanup for size management
+        // but we'll still remove old data points based on timestamp
         let cutoff = Date().addingTimeInterval(-maxAge)
         
-        for (key, values) in metricsCache {
-            metricsCache[key] = values.filter { $0.timestamp >= cutoff }
+        for (key, buffer) in metricsCache {
+            // Create a new buffer with only recent values
+            var newBuffer = CircularBuffer<Metric>(capacity: maxMetricsPerKey)
+            for metric in buffer where metric.timestamp >= cutoff {
+                newBuffer.append(metric)
+            }
             
-            if metricsCache[key]?.isEmpty == true {
+            if newBuffer.isEmpty {
                 metricsCache.removeValue(forKey: key)
+            } else {
+                metricsCache[key] = newBuffer
             }
         }
     }
