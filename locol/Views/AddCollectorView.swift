@@ -112,7 +112,7 @@ struct ReleaseListView: View {
 
 struct AddCollectorView: View {
     @Binding var isPresented: Bool
-    @ObservedObject var manager: CollectorManager
+    let manager: CollectorManager
     @Binding var name: String
     @Binding var selectedRelease: Release?
     @State private var selectedAsset: ReleaseAsset?
@@ -161,16 +161,20 @@ struct AddCollectorView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Add") {
                         if let release = selectedRelease, let asset = selectedAsset {
-                            manager.addCollector(
-                                name: name,
-                                version: release.tagName,
-                                release: release,
-                                asset: asset
-                            )
-                            isPresented = false
-                            selectedAsset = nil
-                            selectedRelease = nil
-                            name = ""
+                            Task {
+                                await manager.addCollector(
+                                    name: name,
+                                    version: release.tagName,
+                                    release: release,
+                                    asset: asset
+                                )
+                                await MainActor.run {
+                                    isPresented = false
+                                    selectedAsset = nil
+                                    selectedRelease = nil
+                                    name = ""
+                                }
+                            }
                         }
                     }
                     .disabled(name.isEmpty || selectedAsset == nil || manager.isDownloading)

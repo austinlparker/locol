@@ -1,10 +1,11 @@
 import Foundation
 import os
+import Observation
 
 struct DataGeneratorConfig: Codable, Identifiable {
     var id = UUID()
     var name: String = "Default Configuration"
-    var endpoint: String = "localhost:4317"
+    var endpoint: String = "127.0.0.1:14317"
     var insecure: Bool = true
     var duration: Int = 0 // 0 means run indefinitely
     var rate: Int = 5
@@ -280,19 +281,20 @@ struct MultiLogConfig: Codable {
     }
 }
 
-class DataGeneratorManager: ObservableObject {
+@Observable
+class DataGeneratorManager {
     static let shared = DataGeneratorManager()
     
-    @Published var config: DataGeneratorConfig {
+    var config: DataGeneratorConfig {
         didSet {
             saveConfig()
         }
     }
-    @Published var isRunning = false
-    @Published var downloadProgress: Double = 0
-    @Published var status: String = ""
-    @Published var isDownloading = false
-    @Published var needsDownload = false
+    var isRunning = false
+    var downloadProgress: Double = 0
+    var status: String = ""
+    var isDownloading = false
+    var needsDownload = false
     
     private var process: Process?
     private let fileManager = CollectorFileManager.shared
@@ -467,37 +469,30 @@ class DataGeneratorManager: ObservableObject {
         
         Logger.app.info("Starting data generator with arguments: \(arguments)")
         
-        do {
-            try await processManager.start(
-                binary: binary,
-                arguments: arguments,
-                outputHandler: { [weak self] output in
-                    guard let self = self else { return }
-                    Task { @MainActor in
-                        self.status = output
-                        self.logger.info(output)
-                    }
-                },
-                onTermination: { [weak self] in
-                    guard let self = self else { return }
-                    Task { @MainActor in
-                        self.isRunning = false
-                        self.status = "Generator stopped"
-                        Logger.app.info("Data generator terminated")
-                    }
+        await processManager.start(
+            binary: binary,
+            arguments: arguments,
+            outputHandler: { [weak self] output in
+                guard let self = self else { return }
+                Task { @MainActor in
+                    self.status = output
+                    self.logger.info(output)
                 }
-            )
-            
-            await MainActor.run {
-                isRunning = true
+            },
+            onTermination: { [weak self] in
+                guard let self = self else { return }
+                Task { @MainActor in
+                    self.isRunning = false
+                    self.status = "Generator stopped"
+                    Logger.app.info("Data generator terminated")
+                }
             }
-            Logger.app.info("Data generator started successfully")
-        } catch {
-            Logger.app.error("Failed to start data generator: \(error.localizedDescription)")
-            await MainActor.run {
-                self.status = "Failed to start generator: \(error.localizedDescription)"
-            }
+        )
+        
+        await MainActor.run {
+            isRunning = true
         }
+        Logger.app.info("Data generator started successfully")
     }
     
     func stopGenerator() async {

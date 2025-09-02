@@ -7,6 +7,7 @@
 
 import Foundation
 import os
+import Observation
 
 // MARK: - System Logger
 extension Logger {
@@ -38,7 +39,7 @@ struct LogEntry: Identifiable, Equatable {
     let timestamp: Date
     let level: LogLevel
     let message: String
-    let source: LogSource
+    let collectorName: String
     
     static func == (lhs: LogEntry, rhs: LogEntry) -> Bool {
         lhs.id == rhs.id
@@ -52,12 +53,10 @@ enum LogSource {
 }
 
 // MARK: - High Volume Logger
-class HighVolumeLogger: ObservableObject {
-    @Published private(set) var logs: CircularBuffer<LogEntry>
-    private let updateThrottle: TimeInterval = 0.1
-    private var lastUpdate = Date()
+@Observable
+class HighVolumeLogger {
+    private(set) var logs: CircularBuffer<LogEntry>
     private let source: LogSource
-    private let queue = DispatchQueue(label: "io.aparker.locol.logger", qos: .userInitiated)
     
     init(capacity: Int = 1000, source: LogSource) {
         self.logs = CircularBuffer(capacity: capacity)
@@ -65,23 +64,22 @@ class HighVolumeLogger: ObservableObject {
     }
     
     func log(_ level: LogLevel, _ message: String) {
-        let entry = LogEntry(timestamp: Date(), level: level, message: message, source: source)
-        
-        queue.async { [weak self] in
-            guard let self = self else { return }
-            
-            // Throttle updates
-            let now = Date()
-            let shouldUpdate = now.timeIntervalSince(self.lastUpdate) >= self.updateThrottle
-            
-            DispatchQueue.main.async {
-                self.logs.append(entry)
-                if shouldUpdate {
-                    self.objectWillChange.send()
-                    self.lastUpdate = now
-                }
-            }
-        }
+        logWithTimestamp(timestamp: Date(), level: level, message: message)
+    }
+    
+    func logWithTimestamp(timestamp: Date, level: LogLevel, message: String, collectorName: String = "default") {
+        let entry = LogEntry(
+            timestamp: timestamp,
+            level: level,
+            message: message,
+            collectorName: collectorName
+        )
+        logs.append(entry)
+    }
+    
+    func logMultiline(timestamp: Date, level: LogLevel, lines: [String], collectorName: String = "default") {
+        let message = lines.joined(separator: "\n")
+        logWithTimestamp(timestamp: timestamp, level: level, message: message, collectorName: collectorName)
     }
     
     func debug(_ message: String) {
@@ -92,15 +90,21 @@ class HighVolumeLogger: ObservableObject {
         log(.info, message)
     }
     
+    func warning(_ message: String) {
+        log(.error, message)
+    }
+    
     func error(_ message: String) {
         log(.error, message)
     }
     
     func clearLogs() {
-        DispatchQueue.main.async {
-            self.logs = CircularBuffer(capacity: self.logs.capacity)
-            self.objectWillChange.send()
-        }
+        logs = CircularBuffer(capacity: logs.capacity)
+    }
+    
+    // Stub methods to maintain API compatibility
+    var availableServices: Set<String> {
+        return Set()
     }
 }
 

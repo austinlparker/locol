@@ -1,12 +1,16 @@
 import Foundation
 import os
 import Yams
+import Observation
 
-class ConfigSnippetManager: ObservableObject {
-    @Published private(set) var snippets: [SnippetType: [ConfigSnippet]] = [:]
-    @Published var currentConfig: [String: Any]?
-    @Published var previewConfig: String?
-    @Published var previewHighlightRange: Range<String.Index>?
+@Observable
+class ConfigSnippetManager {
+    static let shared = ConfigSnippetManager()
+    
+    private(set) var snippets: [SnippetType: [ConfigSnippet]] = [:]
+    var currentConfig: [String: Any]?
+    var previewConfig: String?
+    var previewHighlightRange: Range<String.Index>?
     
     // Track the order of keys at each level of the YAML
     private var keyOrder: [String: [String]] = [:]
@@ -40,7 +44,82 @@ class ConfigSnippetManager: ObservableObject {
             - debug
     """
     
-    init() {
+    func resolvePlaceholders(in content: String) -> String {
+        let settings = OTLPReceiverSettings.shared
+        
+        return content
+            .replacingOccurrences(of: "{{TRACES_ENDPOINT}}", with: settings.grpcEndpoint)
+            .replacingOccurrences(of: "{{METRICS_ENDPOINT}}", with: settings.grpcEndpoint)
+            .replacingOccurrences(of: "{{LOGS_ENDPOINT}}", with: settings.grpcEndpoint)
+            .replacingOccurrences(of: "{{BIND_ADDRESS}}", with: settings.bindAddress)
+            .replacingOccurrences(of: "{{TRACES_PORT}}", with: "\(settings.grpcPort)")
+            .replacingOccurrences(of: "{{METRICS_PORT}}", with: "\(settings.grpcPort)")
+            .replacingOccurrences(of: "{{LOGS_PORT}}", with: "\(settings.grpcPort)")
+    }
+    
+    func generateLocolReceiverConfig() -> String {
+        let settings = OTLPReceiverSettings.shared
+        
+        var exporters: [String] = []
+        var pipelines: [String: Any] = [:]
+        
+        if settings.tracesEnabled {
+            exporters.append("""
+      otlp/locol-traces:
+        endpoint: "\(settings.grpcEndpoint)"
+        tls:
+          insecure: true
+""")
+            pipelines["traces"] = ["exporters": ["otlp/locol-traces"]]
+        }
+        
+        if settings.metricsEnabled {
+            exporters.append("""
+      otlp/locol-metrics:
+        endpoint: "\(settings.grpcEndpoint)"
+        tls:
+          insecure: true
+""")
+            pipelines["metrics"] = ["exporters": ["otlp/locol-metrics"]]
+        }
+        
+        if settings.logsEnabled {
+            exporters.append("""
+      otlp/locol-logs:
+        endpoint: "\(settings.grpcEndpoint)"
+        tls:
+          insecure: true
+""")
+            pipelines["logs"] = ["exporters": ["otlp/locol-logs"]]
+        }
+        
+        let exportersSection = exporters.joined(separator: "\n")
+        
+        var pipelinesYaml: [String] = []
+        for (type, config) in pipelines {
+            if let configDict = config as? [String: Any],
+               let exportersList = configDict["exporters"] as? [String] {
+                let exportersString = exportersList.map { "        - \($0)" }.joined(separator: "\n")
+                pipelinesYaml.append("""
+      \(type):
+        exporters:
+\(exportersString)
+""")
+            }
+        }
+        
+        let pipelinesSection = pipelinesYaml.joined(separator: "\n")
+        
+        return """
+exporters:
+\(exportersSection)
+service:
+  pipelines:
+\(pipelinesSection)
+"""
+    }
+    
+    private init() {
         loadSnippets()
     }
     

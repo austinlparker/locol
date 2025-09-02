@@ -25,7 +25,9 @@ struct Metric: Identifiable {
         self.timestamp = timestamp
         self.value = value
         self.histogram = histogram
-        self.id = MetricKeyGenerator.generateKey(name: name, labels: labels)
+        // Generate unique ID from name and labels
+        let labelString = labels.map { "\($0.key)=\($0.value)" }.sorted().joined(separator: ",")
+        self.id = labelString.isEmpty ? name : "\(name){\(labelString)}"
     }
     
     func formatValueWithInferredUnit(_ value: Double) -> String {
@@ -193,7 +195,6 @@ struct HistogramMetric {
         }
         
         // Find the bucket containing our target rank
-        var lastRank = 0.0
         for (i, bucket) in sortedBuckets.enumerated() {
             if bucket.upperBound.isInfinite {
                 continue
@@ -214,7 +215,6 @@ struct HistogramMetric {
                 let bucketRank = (q - prevRank) / (nextRank - prevRank)
                 return prevBound + (bucket.upperBound - prevBound) * bucketRank
             }
-            lastRank = nextRank
         }
         
         // If we get here, return the highest finite bucket

@@ -1,8 +1,8 @@
 import SwiftUI
 
 struct DataGeneratorView: View {
-    @ObservedObject var manager: DataGeneratorManager
-    @StateObject private var configManager = DataGeneratorConfigManager.shared
+    @Bindable var manager: DataGeneratorManager
+    @State private var configManager = DataGeneratorConfigManager.shared
     @State private var error: Error?
     @State private var showError = false
     @State private var showingSaveDialog = false
@@ -14,10 +14,6 @@ struct DataGeneratorView: View {
     @State private var selectedTab = 0
     @State private var isDownloading = false
     
-    init(manager: DataGeneratorManager = .shared) {
-        self._manager = ObservedObject(wrappedValue: manager)
-    }
-    
     private var controlBar: some View {
         HStack {
             if manager.isRunning {
@@ -28,6 +24,10 @@ struct DataGeneratorView: View {
                         .opacity(0.8)
                     Text("Running")
                         .foregroundStyle(.secondary)
+                    
+                    Text("Generated: \(0)")
+                        .foregroundStyle(.secondary)
+                        .font(.caption)
                 }
                 .transition(.opacity)
             }
@@ -194,31 +194,55 @@ struct DataGeneratorView: View {
         VStack(spacing: 0) {
             controlBar
             
-            if manager.needsDownload {
-                downloadPrompt
-            } else if isDownloading {
+            TabView(selection: $selectedTab) {
+                configurationView
+                    .tabItem {
+                        Label("Configuration", systemImage: "gear")
+                    }
+                    .tag(0)
+                
                 VStack(spacing: 16) {
-                    ProgressView()
-                        .scaleEffect(0.8)
-                    Text("Downloading generator...")
-                        .foregroundStyle(.secondary)
+                    if manager.isRunning {
+                        VStack(spacing: 8) {
+                            HStack {
+                                Circle()
+                                    .fill(.green)
+                                    .frame(width: 8, height: 8)
+                                Text("Generator is running")
+                                    .font(.headline)
+                                Spacer()
+                            }
+                            
+                            HStack {
+                                Text("Status:")
+                                    .foregroundStyle(.secondary)
+                                Text(manager.status)
+                                Spacer()
+                            }
+                            
+                            HStack {
+                                Text("Generated items:")
+                                    .foregroundStyle(.secondary)
+                                Text("\(0)")
+                                    .font(.title2)
+                                    .bold()
+                                Spacer()
+                            }
+                        }
+                        .padding()
+                        .background(.background.secondary)
+                        .cornerRadius(8)
+                    } else {
+                        Text("Start the generator to see status information")
+                            .foregroundColor(.secondary)
+                    }
+                    Spacer()
                 }
                 .padding()
-            } else {
-                TabView(selection: $selectedTab) {
-                    configurationView
-                        .tabItem {
-                            Label("Configuration", systemImage: "gear")
-                        }
-                        .tag(0)
-                    
-                    DataGeneratorLogView()
-                        .padding()
-                        .tabItem {
-                            Label("Logs", systemImage: "text.alignleft")
-                        }
-                        .tag(1)
+                .tabItem {
+                    Label("Status", systemImage: "chart.bar")
                 }
+                .tag(1)
             }
         }
         .frame(minWidth: 600, minHeight: 800)

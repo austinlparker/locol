@@ -1,8 +1,8 @@
 import SwiftUI
 
 struct MainAppView: View {
-    @ObservedObject var collectorManager: CollectorManager
-    @ObservedObject var dataGeneratorManager: DataGeneratorManager
+    let collectorManager: CollectorManager
+    let dataGeneratorManager: DataGeneratorManager
     @State private var selectedNavigation: NavigationItem? = .collectors
     @State private var selectedCollector: CollectorInstance? = nil
     @State private var showAddCollectorSheet = false
@@ -15,12 +15,16 @@ struct MainAppView: View {
     enum NavigationItem: Hashable {
         case collectors
         case dataSender
+        case otlpReceiver
+        case telemetry
         case collector(UUID)
         
         var id: String {
             switch self {
             case .collectors: return "collectors"
             case .dataSender: return "dataSender"
+            case .otlpReceiver: return "otlpReceiver"
+            case .telemetry: return "telemetry"
             case .collector(let id): return "collector-\(id.uuidString)"
             }
         }
@@ -38,7 +42,9 @@ struct MainAppView: View {
         .onAppear {
             // Load releases when the app first appears
             if !hasFetchedReleases {
-                collectorManager.getCollectorReleases(repo: "opentelemetry-collector-releases")
+                Task {
+                    await collectorManager.getCollectorReleases(repo: "opentelemetry-collector-releases")
+                }
                 hasFetchedReleases = true
             }
         }
@@ -63,6 +69,16 @@ struct MainAppView: View {
                 
                 NavigationLink(value: NavigationItem.dataSender) {
                     Label("Data Generator", systemImage: "paperplane")
+                }
+                
+                NavigationLink(value: NavigationItem.otlpReceiver) {
+                    Label("OTLP Receiver", systemImage: "tray.and.arrow.down")
+                }
+                
+                if #available(macOS 15.0, *) {
+                    NavigationLink(value: NavigationItem.telemetry) {
+                        Label("Telemetry", systemImage: "chart.line.uptrend.xyaxis")
+                    }
                 }
             }
             
@@ -122,7 +138,7 @@ struct MainAppView: View {
             }
         }
         .listStyle(SidebarListStyle())
-        .frame(minWidth: 220, idealWidth: 250)
+        .frame(minWidth: 220)
         .toolbar {
             ToolbarItem {
                 Button(action: { showAddCollectorSheet = true }) {
@@ -147,6 +163,35 @@ struct MainAppView: View {
             // Show data generator view
             DataGeneratorView(manager: dataGeneratorManager)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+        
+        case .otlpReceiver:
+            // Show OTLP receiver view
+            if #available(macOS 15.0, *) {
+                OTLPReceiverView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                VStack {
+                    Text("OTLP Receiver")
+                        .font(.title2)
+                    Text("OTLP receiver requires macOS 15.0 or newer")
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            
+        case .telemetry:
+            // Show telemetry data view
+            if #available(macOS 15.0, *) {
+                TelemetryView(collectorManager: collectorManager)
+            } else {
+                VStack {
+                    Text("Telemetry Data")
+                        .font(.title2)
+                    Text("Telemetry data view requires macOS 15.0 or newer")
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
             
         case .collector(let collectorId):
             // Show collector details
@@ -210,7 +255,7 @@ struct CollectorRowView: View {
 }
 
 struct CollectorsOverviewView: View {
-    @ObservedObject var collectorManager: CollectorManager
+    let collectorManager: CollectorManager
     let onAddCollector: () -> Void
     
     var body: some View {
@@ -367,11 +412,16 @@ struct CollectorTabView: View {
                     Label("Configuration", systemImage: "doc.text")
                 }
             
-            FeatureGatesView(collector: collector, manager: manager)
-                .padding()
-                .tabItem {
-                    Label("Feature Gates", systemImage: "switch.2")
-                }
+            VStack {
+                Text("Feature Gates")
+                    .font(.title2)
+                Text("Feature gates configuration coming soon")
+                    .foregroundStyle(.secondary)
+            }
+            .padding()
+            .tabItem {
+                Label("Feature Gates", systemImage: "switch.2")
+            }
                 
             ComponentsView(collector: collector)
                 .padding()
@@ -379,18 +429,23 @@ struct CollectorTabView: View {
                     Label("Components", systemImage: "cube.box")
                 }
                 
-            MetricsView()
-                .environmentObject(manager.getMetricsManager())
-                .padding()
-                .tabItem {
-                    Label("Metrics", systemImage: "chart.bar")
+            if #available(macOS 15.0, *) {
+                TelemetryView(collectorName: collector.name)
+                    .tabItem {
+                        Label("Telemetry", systemImage: "chart.line.uptrend.xyaxis")
+                    }
+            } else {
+                VStack {
+                    Text("Telemetry")
+                        .font(.title2)
+                    Text("Telemetry view requires macOS 15.0 or newer")
+                        .foregroundStyle(.secondary)
                 }
-                
-            LogViewer(collector: collector)
-                .padding()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .tabItem {
-                    Label("Logs", systemImage: "text.line.last.and.arrowtriangle.forward")
+                    Label("Telemetry", systemImage: "chart.line.uptrend.xyaxis")
                 }
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -430,7 +485,7 @@ struct ComponentsView: View {
                         if let receivers = components.receivers, !receivers.isEmpty {
                             ComponentSection(
                                 title: "Receivers",
-                                components: receivers,
+                                components: receivers.map(\.name),
                                 version: collector.version,
                                 color: .blue
                             )
@@ -439,7 +494,7 @@ struct ComponentsView: View {
                         if let processors = components.processors, !processors.isEmpty {
                             ComponentSection(
                                 title: "Processors",
-                                components: processors,
+                                components: processors.map(\.name),
                                 version: collector.version,
                                 color: .green
                             )
@@ -448,7 +503,7 @@ struct ComponentsView: View {
                         if let exporters = components.exporters, !exporters.isEmpty {
                             ComponentSection(
                                 title: "Exporters",
-                                components: exporters,
+                                components: exporters.map(\.name),
                                 version: collector.version,
                                 color: .purple
                             )
@@ -457,7 +512,7 @@ struct ComponentsView: View {
                         if let extensions = components.extensions, !extensions.isEmpty {
                             ComponentSection(
                                 title: "Extensions",
-                                components: extensions,
+                                components: extensions.map(\.name),
                                 version: collector.version,
                                 color: .orange
                             )

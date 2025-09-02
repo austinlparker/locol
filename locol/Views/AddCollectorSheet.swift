@@ -3,7 +3,7 @@ import SwiftUI
 struct AddCollectorSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    @ObservedObject var manager: CollectorManager
+    let manager: CollectorManager
     @Binding var name: String
     @Binding var selectedRelease: Release?
     @State private var selectedAsset: ReleaseAsset?
@@ -58,7 +58,9 @@ struct AddCollectorSheet: View {
                                 Text("Try refreshing the list")
                             } actions: {
                                 Button("Refresh") {
-                                    manager.getCollectorReleases(repo: "opentelemetry-collector-releases", forceRefresh: true)
+                                    Task {
+                                        await manager.getCollectorReleases(repo: "opentelemetry-collector-releases", forceRefresh: true)
+                                    }
                                 }
                             }
                             .padding()
@@ -94,12 +96,14 @@ struct AddCollectorSheet: View {
                 
                 Button("Add") {
                     if let release = selectedRelease, let asset = selectedAsset {
-                        manager.addCollector(
-                            name: name,
-                            version: release.tagName,
-                            release: release,
-                            asset: asset
-                        )
+                        Task {
+                            await manager.addCollector(
+                                name: name,
+                                version: release.tagName,
+                                release: release,
+                                asset: asset
+                            )
+                        }
                     }
                 }
                 .keyboardShortcut(.return, modifiers: [.command])
@@ -113,7 +117,9 @@ struct AddCollectorSheet: View {
         .onAppear {
             isNameFieldFocused = true
             if manager.availableReleases.isEmpty {
-                manager.getCollectorReleases(repo: "opentelemetry-collector-releases")
+                Task {
+                    await manager.getCollectorReleases(repo: "opentelemetry-collector-releases")
+                }
             }
         }
         .onChange(of: manager.isDownloading) { oldValue, newValue in

@@ -34,8 +34,8 @@ extension View {
 
 @main
 struct locolApp: App {
-    @StateObject private var collectorManager = CollectorManager()
-    @StateObject private var dataGeneratorManager = DataGeneratorManager.shared
+    @State private var collectorManager = CollectorManager()
+    @State private var dataGeneratorManager = DataGeneratorManager.shared
     @Environment(\.openWindow) private var openWindow
     
     var body: some Scene {
@@ -45,6 +45,24 @@ struct locolApp: App {
                 dataGeneratorManager: dataGeneratorManager
             )
             .setupLogging() // Initialize logging when app launches
+            .task {
+                // Start OTLP receiver when app launches
+                //try await otlpReceiver.start()
+                Logger.app.info("OTLP receiver started successfully")
+                
+                // Initialize telemetry database maintenance
+                if #available(macOS 15.0, *) {
+                    TelemetryDatabase.shared.startPeriodicMaintenance(intervalHours: 24)
+                    Logger.app.info("Started telemetry database maintenance")
+                }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+                // Clean up database connections on app termination
+                if #available(macOS 15.0, *) {
+                    TelemetryDatabase.shared.closeAllConnections()
+                    Logger.app.info("Closed telemetry database connections")
+                }
+            }
         }
         .commands {
             // Add app menu commands
@@ -52,6 +70,14 @@ struct locolApp: App {
                 Button("About locol") {
                     openWindow(id: "AboutWindow")
                 }
+            }
+            
+            // Add settings menu command
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings...") {
+                    openWindow(id: "SettingsWindow")
+                }
+                .keyboardShortcut(",", modifiers: .command)
             }
             
             // Add help menu commands
@@ -103,6 +129,24 @@ struct locolApp: App {
             .frame(width: 400, height: 350)
         }
         .defaultSize(width: 400, height: 350)
+        
+        // Settings window
+        Window("Settings", id: "SettingsWindow") {
+            if #available(macOS 15.0, *) {
+                AppSettingsView()
+                    .frame(width: 500, height: 400)
+            } else {
+                VStack {
+                    Text("Settings")
+                        .font(.title2)
+                    Text("Advanced settings require macOS 15.0 or newer")
+                        .foregroundStyle(.secondary)
+                }
+                .frame(width: 500, height: 400)
+            }
+        }
+        .windowResizability(.contentSize)
+        .defaultSize(width: 500, height: 400)
     }
 }
 

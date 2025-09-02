@@ -1,9 +1,11 @@
 import Foundation
+import Observation
 
-class DataGeneratorConfigManager: ObservableObject {
+@Observable
+class DataGeneratorConfigManager {
     static let shared = DataGeneratorConfigManager()
     
-    @Published private(set) var savedConfigs: [DataGeneratorConfig] = []
+    private(set) var savedConfigs: [DataGeneratorConfig] = []
     private let configsKey = "SavedDataGeneratorConfigs"
     
     init() {

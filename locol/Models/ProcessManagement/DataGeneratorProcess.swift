@@ -1,16 +1,17 @@
 import Foundation
 import Subprocess
+import System
 
 actor DataGeneratorProcess {
     static let shared = DataGeneratorProcess()
-    private var activeSubprocess: Subprocess?
+    private var activeTask: Task<Void, Never>?
     private var terminationCallback: (() -> Void)?
     private var hasTerminated = false
     
     private init() {}
     
     var isRunning: Bool {
-        activeSubprocess?.isRunning ?? false
+        activeTask?.isCancelled == false && !hasTerminated
     }
     
     func start(
@@ -18,54 +19,43 @@ actor DataGeneratorProcess {
         arguments: [String],
         outputHandler: @escaping @Sendable (String) -> Void,
         onTermination: @escaping @Sendable () -> Void
-    ) throws {
+    ) {
         // Reset state
         hasTerminated = false
         terminationCallback = onTermination
         
-        // Build command array with binary as first argument
-        var command = [binary]
-        command.append(contentsOf: arguments)
-        
-        let process = Subprocess(command)
-        
-        // Launch process with output handling
-        try process.launch(
-            outputHandler: { data in
-                if let output = String(data: data, encoding: .utf8) {
-                    Task { @MainActor in
-                        outputHandler(output)
+        // Start process using new API
+        activeTask = Task {
+            do {
+                _ = try await run(.path(FilePath(binary)), arguments: Arguments(arguments)) { execution, standardOutput in
+                    // Process stdout lines
+                    for try await line in standardOutput.lines(encoding: UTF8.self) {
+                        await MainActor.run {
+                            outputHandler(line)
+                        }
                     }
                 }
-            },
-            errorHandler: { data in
-                if let output = String(data: data, encoding: .utf8) {
-                    Task { @MainActor in
-                        outputHandler(output)
-                    }
-                }
-            },
-            terminationHandler: { [weak self] _ in
-                Task {
-                    guard let self = self else { return }
-                    await self.handleTermination()
-                }
+                
+                // Handle termination
+                self.handleTermination()
+                
+            } catch {
+                // Handle error and terminate
+                self.handleTermination()
             }
-        )
-        
-        self.activeSubprocess = process
+        }
     }
     
     func stop() {
-        if let process = activeSubprocess {
-            process.kill()
-            activeSubprocess = nil
+        if let task = activeTask {
+            task.cancel()
+            activeTask = nil
             callTerminationCallback()
         }
     }
     
     private func handleTermination() {
-        activeSubprocess = nil
+        activeTask = nil
         callTerminationCallback()
     }
     

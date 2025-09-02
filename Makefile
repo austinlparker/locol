@@ -4,7 +4,7 @@ ifneq (,$(wildcard .env))
     export
 endif
 
-.PHONY: all clean build archive dmg notarize
+.PHONY: all clean build archive dmg notarize gen-swift gen-grpc clean-proto build-plugins
 
 # Check for required environment variables
 REQUIRED_ENV_VARS := APPLE_ID TEAM_ID
@@ -19,11 +19,61 @@ ARCHIVE_PATH = $(BUILD_DIR)/$(APP_NAME).xcarchive
 EXPORT_PATH = $(BUILD_DIR)/export
 DMG_PATH = $(BUILD_DIR)/$(APP_NAME).dmg
 
+# Protobuf generation variables
+PROTO_SRC_DIR = opentelemetry-proto/opentelemetry/proto
+PROTO_GEN_SWIFT_DIR = locol/Generated
+
 # Default target
 all: dmg
 
+# Build protoc plugins  
+build-plugins:
+	@echo "Building protoc plugins from project dependencies..."
+	@xcodebuild -scheme locol -derivedDataPath build -configuration Debug build
+
+# Generate Swift protobuf files
+gen-swift:
+	@echo "Generating Swift protobuf files..."
+	@mkdir -p $(PROTO_GEN_SWIFT_DIR)
+	@find $(PROTO_SRC_DIR) -name "*.proto" -exec protoc \
+		--proto_path=opentelemetry-proto \
+		--swift_out=$(PROTO_GEN_SWIFT_DIR) \
+		--swift_opt=Visibility=Public \
+		{} +
+	@echo "Swift protobuf files generated in $(PROTO_GEN_SWIFT_DIR)"
+
+# Generate gRPC Swift files
+gen-grpc:
+	@echo "Generating gRPC Swift files..."
+	@mkdir -p $(PROTO_GEN_SWIFT_DIR)
+	@# First try homebrew-installed plugin
+	@PLUGIN_PATH=$$(which protoc-gen-grpc-swift-2 2>/dev/null); \
+	if [ -z "$$PLUGIN_PATH" ]; then \
+		PLUGIN_PATH="/opt/homebrew/bin/protoc-gen-grpc-swift-2"; \
+	fi; \
+	if [ -z "$$PLUGIN_PATH" ]; then \
+		PLUGIN_PATH=$$(find build -name "protoc-gen-grpc-swift-2" -type f 2>/dev/null | head -1); \
+	fi; \
+	if [ -n "$$PLUGIN_PATH" ] && [ -x "$$PLUGIN_PATH" ]; then \
+		echo "Using plugin at: $$PLUGIN_PATH"; \
+		find $(PROTO_SRC_DIR)/collector -name "*_service.proto" -exec protoc \
+			--plugin=$$PLUGIN_PATH \
+			--proto_path=opentelemetry-proto \
+			--grpc-swift-2_out=$(PROTO_GEN_SWIFT_DIR) \
+			--grpc-swift-2_opt=Visibility=Public \
+			{} +; \
+	else \
+		echo "protoc-gen-grpc-swift-2 plugin not found. Install with: brew install protoc-gen-grpc-swift"; \
+		exit 1; \
+	fi
+	@echo "gRPC Swift files generated in $(PROTO_GEN_SWIFT_DIR)"
+
+# Clean generated protobuf files
+clean-proto:
+	rm -rf $(PROTO_GEN_SWIFT_DIR)
+
 # Clean build artifacts
-clean:
+clean: clean-proto
 	rm -rf $(BUILD_DIR)
 	xcodebuild clean -project $(PROJECT) -scheme $(SCHEME)
 
@@ -45,7 +95,7 @@ build_deps:
 		DEBUG_INFORMATION_FORMAT=dwarf-with-dsym
 
 # Build the app in release mode
-build: build_deps
+build: gen-swift gen-grpc build_deps
 	xcodebuild clean build \
 		-project $(PROJECT) \
 		-scheme $(SCHEME) \

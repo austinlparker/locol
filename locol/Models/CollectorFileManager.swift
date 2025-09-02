@@ -9,7 +9,9 @@ public class CollectorFileManager {
     let templatesDirectory: URL
     
     public init() {
-        self.baseDirectory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".locol")
+        // Use explicit home directory path to avoid sandboxed container redirection
+        let homeDir = URL(fileURLWithPath: NSHomeDirectory())
+        self.baseDirectory = homeDir.appendingPathComponent(".locol")
         self.templatesDirectory = Bundle.main.resourceURL?.appendingPathComponent("templates") ?? baseDirectory.appendingPathComponent("templates")
         
         try? createDirectoryStructure()

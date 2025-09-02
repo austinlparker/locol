@@ -1,19 +1,20 @@
 import Foundation
 import os
+import Observation
 
-class ReleaseManager: ObservableObject {
-    @Published var availableReleases: [Release] = []
+@Observable
+class ReleaseManager {
+    var availableReleases: [Release] = []
     private let logger = Logger.app
     
     private let cacheKeyReleases = "CachedReleases"
     private let cacheKeyTimestamp = "CachedReleasesTimestamp"
     
-    func getCollectorReleases(repo: String, forceRefresh: Bool = false, completion: @escaping () -> Void = {}) {
+    func getCollectorReleases(repo: String, forceRefresh: Bool = false) async {
         if !forceRefresh, let cachedReleases = getCachedReleases() {
-            DispatchQueue.main.async {
+            await MainActor.run {
                 self.availableReleases = cachedReleases
                 self.logger.info("Loaded releases from cache")
-                completion()
             }
             return
         }
@@ -21,7 +22,6 @@ class ReleaseManager: ObservableObject {
         let urlString = "https://api.github.com/repos/open-telemetry/\(repo)/releases"
         guard let url = URL(string: urlString) else {
             logger.error("Invalid URL: \(urlString)")
-            completion()
             return
         }
 
@@ -31,53 +31,35 @@ class ReleaseManager: ObservableObject {
         request.httpMethod = "GET"
         request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
 
-        let task = URLSession.shared.dataTask(with: request) { data, response, error in
-            if let error = error {
-                self.logger.error("Error fetching releases: \(error.localizedDescription)")
-                completion()
-                return
-            }
-
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
             guard let httpResponse = response as? HTTPURLResponse else {
-                self.logger.error("Invalid response received")
-                completion()
+                logger.error("Invalid response type")
                 return
             }
 
+            
             if httpResponse.statusCode == 403, let resetTime = httpResponse.value(forHTTPHeaderField: "X-RateLimit-Reset") {
                 let resetTimestamp = Double(resetTime) ?? 0
                 let resetDate = Date(timeIntervalSince1970: resetTimestamp)
-                self.logger.error("Rate limited. Retry after \(resetDate)")
-                completion()
+                logger.error("Rate limited. Retry after \(resetDate)")
                 return
             }
 
-            guard let data = data else {
-                self.logger.error("No data received")
-                completion()
-                return
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            let releases = try decoder.decode([Release].self, from: data)
+
+            let filteredReleases = self.filterReleases(releases)
+            logger.info("Filtered releases count: \(filteredReleases.count)")
+            cacheReleases(filteredReleases)
+
+            await MainActor.run {
+                self.availableReleases = filteredReleases
             }
-
-            do {
-                let decoder = JSONDecoder()
-                decoder.dateDecodingStrategy = .iso8601
-                let releases = try decoder.decode([Release].self, from: data)
-
-                let filteredReleases = self.filterReleases(releases)
-                self.logger.info("Filtered releases count: \(filteredReleases.count)")
-                self.cacheReleases(filteredReleases)
-
-                DispatchQueue.main.async {
-                    self.availableReleases = filteredReleases
-                    completion()
-                }
-            } catch {
-                self.logger.error("Failed to decode releases: \(error.localizedDescription)")
-                completion()
-            }
+        } catch {
+            logger.error("Failed to fetch releases: \(error.localizedDescription)")
         }
-
-        task.resume()
     }
     
     private func filterReleases(_ releases: [Release]) -> [Release] {

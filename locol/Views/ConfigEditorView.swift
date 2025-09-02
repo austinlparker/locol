@@ -8,13 +8,15 @@
 import SwiftUI
 import CodeEditor
 import os
+import Observation
 
 @MainActor
-class ConfigEditorViewModel: ObservableObject {
-    @Published var configText: String = ""
-    @Published var showingSnippetError = false
-    @Published var errorMessage = ""
-    @Published var previewSnippet: ConfigSnippet?
+@Observable
+class ConfigEditorViewModel {
+    var configText: String = ""
+    var showingSnippetError = false
+    var errorMessage = ""
+    var previewSnippet: ConfigSnippet?
     
     private var originalConfig: String = ""
     private let snippetManager: ConfigSnippetManager
@@ -24,7 +26,7 @@ class ConfigEditorViewModel: ObservableObject {
     init(manager: CollectorManager, collectorId: UUID) {
         self.manager = manager
         self.collectorId = collectorId
-        self.snippetManager = ConfigSnippetManager()
+        self.snippetManager = ConfigSnippetManager.shared
         loadConfig()
     }
     
@@ -113,11 +115,11 @@ struct ListSectionHeader: View {
 }
 
 struct ConfigEditorView: View {
-    @StateObject private var viewModel: ConfigEditorViewModel
+    @State private var viewModel: ConfigEditorViewModel
     @Environment(\.colorScheme) private var colorScheme
     
     init(manager: CollectorManager, collectorId: UUID) {
-        _viewModel = StateObject(wrappedValue: ConfigEditorViewModel(manager: manager, collectorId: collectorId))
+        _viewModel = State(wrappedValue: ConfigEditorViewModel(manager: manager, collectorId: collectorId))
     }
     
     var body: some View {
@@ -261,34 +263,8 @@ struct ConfigEditorView: View {
     let mockManager = CollectorManager()
     let mockCollectorId = UUID()
     
-    // Create mock release data
-    let mockAsset = ReleaseAsset(
-        url: "https://example.com",
-        id: 1,
-        name: "mock-collector",
-        contentType: "application/octet-stream",
-        size: 1000,
-        downloadCount: 0,
-        browserDownloadURL: "https://example.com/download"
-    )
-    
-    let mockRelease = Release(
-        url: "https://example.com",
-        htmlURL: "https://example.com",
-        assetsURL: "https://example.com/assets",
-        tagName: "v1.0.0",
-        name: "Release v1.0.0",
-        publishedAt: "2024-03-17",
-        author: nil,
-        assets: [mockAsset]
-    )
-    
-    mockManager.addCollector(
-        name: "Mock Collector",
-        version: mockRelease.tagName,
-        release: mockRelease,
-        asset: mockAsset
-    )
+    // For preview, we'll just create a simple view without adding a collector
+    // since addCollector is async and can't be called in preview context
     
     return ConfigEditorView(
         manager: mockManager,

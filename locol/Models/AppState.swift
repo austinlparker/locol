@@ -1,8 +1,10 @@
 import Foundation
 import os
+import Observation
 
-class AppState: ObservableObject {
-    @Published private(set) var collectors: [CollectorInstance]
+@Observable
+class AppState {
+    private(set) var collectors: [CollectorInstance]
     private let stateKey = "SavedCollectors"
     private let logger = Logger.app
     

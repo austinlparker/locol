@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ConfigSnippetView: View {
-    @ObservedObject var snippetManager: ConfigSnippetManager
+    let snippetManager: ConfigSnippetManager
     var onSnippetSelected: (ConfigSnippet) -> Void
     
     var body: some View {

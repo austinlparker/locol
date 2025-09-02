@@ -3,22 +3,24 @@ import Combine
 import Subprocess
 import os
 import AppKit
+import Observation
+import Yams
 
 // A cleaner implementation that properly handles actor isolation
 @MainActor
-class CollectorManager: ObservableObject {
+@Observable
+class CollectorManager {
     static let shared = CollectorManager()
     
-    // Published properties for UI updates
-    @Published private(set) var isDownloading: Bool = false
-    @Published private(set) var isLoadingReleases: Bool = false
-    @Published var downloadProgress: Double = 0.0
-    @Published var downloadStatus: String = ""
-    @Published private(set) var activeCollector: CollectorInstance? = nil
-    @Published private(set) var isProcessingOperation: Bool = false
+    // Properties for UI updates
+    private(set) var isDownloading: Bool = false
+    private(set) var isLoadingReleases: Bool = false
+    var downloadProgress: Double = 0.0
+    var downloadStatus: String = ""
+    private(set) var activeCollector: CollectorInstance? = nil
+    private(set) var isProcessingOperation: Bool = false
     
     // Core services
-    private let metricsManager = MetricsManager.shared
     private var cancellables = Set<AnyCancellable>()
     
     let fileManager: CollectorFileManager
@@ -44,23 +46,6 @@ class CollectorManager: ObservableObject {
             appState.updateCollector(updatedCollector)
         }
         
-        // Set up bindings
-        downloadManager.objectWillChange.sink { [weak self] in
-            self?.objectWillChange.send()
-        }
-        .store(in: &cancellables)
-        
-        downloadManager.$downloadProgress
-            .assign(to: &$downloadProgress)
-        
-        downloadManager.$downloadStatus
-            .assign(to: &$downloadStatus)
-            
-        processManager.objectWillChange.sink { [weak self] in
-            self?.objectWillChange.send()
-        }
-        .store(in: &cancellables)
-        
         // Register for application termination notification
         NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)
             .sink { [weak self] _ in
@@ -81,9 +66,152 @@ class CollectorManager: ObservableObject {
         appState.collectors
     }
     
+    // MARK: - Service Telemetry Injection
+    
+    private func injectServiceTelemetry(for collector: CollectorInstance) throws -> CollectorInstance {
+        // Read the current configuration
+        let configURL = URL(fileURLWithPath: collector.configPath)
+        let configContent = try String(contentsOf: configURL, encoding: .utf8)
+        
+        // Parse the YAML configuration
+        guard var config = try Yams.load(yaml: configContent) as? [String: Any] else {
+            throw NSError(domain: "io.aparker.locol", code: 1, userInfo: [
+                NSLocalizedDescriptionKey: "Failed to parse collector configuration"
+            ])
+        }
+        
+        // Get OTLP receiver settings
+        let settings = OTLPReceiverSettings.shared
+        
+        // Check if OTLP receiver is available (it auto-starts as a singleton)
+        if #available(macOS 15.0, *) {
+            // Always inject telemetry - the receiver will auto-start if needed
+            logger.info("Injecting OTLP telemetry configuration")
+        } else {
+            logger.info("OTLP receiver not available on this macOS version, skipping telemetry injection")
+            return collector
+        }
+        
+        // Create service telemetry configuration
+        var serviceTelemetry: [String: Any] = [:]
+        
+        // Inject traces telemetry if enabled
+        if settings.tracesEnabled {
+            serviceTelemetry["traces"] = [
+                "processors": [
+                    [
+                        "batch": [
+                            "exporter": [
+                                "otlp": [
+                                    "protocol": "grpc",
+                                    "endpoint": settings.grpcEndpoint,
+                                    "headers": [
+                                        "collector-name": collector.name
+                                    ]
+                                ]
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+        }
+        
+        // Inject metrics telemetry if enabled
+        if settings.metricsEnabled {
+            serviceTelemetry["metrics"] = [
+                "level": "detailed",
+                "readers": [
+                    [
+                        "periodic": [
+                            "exporter": [
+                                "otlp": [
+                                    "protocol": "grpc",
+                                    "endpoint": settings.grpcEndpoint,
+                                    "headers": [
+                                        "collector-name": collector.name
+                                    ]
+                                ]
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+        }
+        
+        // Inject logs telemetry if enabled
+        if settings.logsEnabled {
+            serviceTelemetry["logs"] = [
+                "processors": [
+                    [
+                        "batch": [
+                            "exporter": [
+                                "otlp": [
+                                    "protocol": "grpc",
+                                    "endpoint": settings.grpcEndpoint,
+                                    "headers": [
+                                        "collector-name": collector.name
+                                    ]
+                                ]
+                            ]
+                        ]
+                    ]
+                ]
+            ]
+        }
+        
+        // Inject the service telemetry into the configuration
+        if var service = config["service"] as? [String: Any] {
+            service["telemetry"] = serviceTelemetry
+            config["service"] = service
+        } else {
+            config["service"] = [
+                "telemetry": serviceTelemetry
+            ]
+        }
+        
+        // Write the updated configuration to a temporary file
+        let modifiedConfigContent = try Yams.dump(object: config)
+        let tempConfigURL = configURL.appendingPathExtension("locol-temp")
+        try modifiedConfigContent.write(to: tempConfigURL, atomically: true, encoding: .utf8)
+        
+        logger.info("Injected service telemetry configuration for collector \(collector.name)")
+        
+        // Return a new collector instance with the temp config path
+        return CollectorInstance(
+            id: collector.id,
+            name: collector.name,
+            version: collector.version,
+            binaryPath: collector.binaryPath,
+            configPath: tempConfigURL.path,
+            commandLineFlags: collector.commandLineFlags,
+            isRunning: collector.isRunning,
+            pid: collector.pid,
+            startTime: collector.startTime,
+            components: collector.components
+        )
+    }
+    
+    private func cleanupTempConfig(for collector: CollectorInstance) {
+        // The temp config path might be the current config path if telemetry was injected
+        let configURL = URL(fileURLWithPath: collector.configPath)
+        
+        // Check if the current config path is a temp file
+        if configURL.pathExtension == "locol-temp" {
+            try? FileManager.default.removeItem(at: configURL)
+            logger.debug("Cleaned up temporary configuration file for collector \(collector.name)")
+        } else {
+            // Also check for a temp file based on the original path
+            let tempConfigURL = configURL.appendingPathExtension("locol-temp")
+            if FileManager.default.fileExists(atPath: tempConfigURL.path) {
+                try? FileManager.default.removeItem(at: tempConfigURL)
+                logger.debug("Cleaned up temporary configuration file for collector \(collector.name)")
+            }
+        }
+    }
+    
     // MARK: - Collector Management
     
-    func addCollector(name: String, version: String, release: Release, asset: ReleaseAsset) {
+    func addCollector(name: String, version: String, release: Release, asset: ReleaseAsset) async {
         isDownloading = true
         downloadStatus = "Creating collector directory..."
         downloadProgress = 0.0
@@ -104,79 +232,85 @@ class CollectorManager: ObservableObject {
             
             // Then download the asset
             downloadStatus = "Downloading collector binary..."
-            downloadManager.downloadAsset(releaseAsset: asset, name: name, version: version, binaryPath: binaryPath, configPath: configPath) { [weak self] result in
-                guard let self = self else { return }
-                
-                DispatchQueue.main.async {
-                    switch result {
-                    case .success((let binaryPath, let configPath)):
-                        let collector = CollectorInstance(
-                            name: name,
-                            version: version,
-                            binaryPath: binaryPath,
-                            configPath: configPath
-                        )
-                        self.appState.addCollector(collector)
-                        
-                        // Get component information
-                        Task {
-                            do {
-                                self.downloadStatus = "Getting component information..."
-                                let components = try await self.processManager.getCollectorComponents(collector)
-                                
-                                await MainActor.run {
-                                    var updatedCollector = collector
-                                    updatedCollector.components = components
-                                    self.appState.updateCollector(updatedCollector)
-                                    self.isDownloading = false
-                                    self.downloadProgress = 0.0
-                                    self.downloadStatus = ""
-                                }
-                            } catch {
-                                await MainActor.run {
-                                    self.handleError(error, context: "Failed to get collector components")
-                                    self.isDownloading = false
-                                    self.downloadProgress = 0.0
-                                    self.downloadStatus = ""
-                                }
-                            }
-                        }
-                    case .failure(let error):
-                        self.handleError(error, context: "Failed to download collector")
-                        // Clean up the directory on failure
-                        try? self.fileManager.deleteCollector(name: name)
-                        self.isDownloading = false
-                        self.downloadProgress = 0.0
-                        self.downloadStatus = ""
+            
+            // Start monitoring download progress
+            let progressTask = Task { [weak self] in
+                while !Task.isCancelled {
+                    guard let self else { return }
+                    await MainActor.run {
+                        self.downloadProgress = self.downloadManager.downloadProgress
+                        self.downloadStatus = self.downloadManager.downloadStatus
                     }
+                    try? await Task.sleep(nanoseconds: 100_000_000) // 0.1 seconds
                 }
             }
-        } catch {
-            DispatchQueue.main.async {
-                self.handleError(error, context: "Failed to create collector directory")
-                self.isDownloading = false
-                self.downloadProgress = 0.0
-                self.downloadStatus = ""
+            
+            let (downloadedBinaryPath, downloadedConfigPath) = try await downloadManager.downloadAsset(
+                releaseAsset: asset,
+                name: name,
+                version: version,
+                binaryPath: binaryPath,
+                configPath: configPath
+            )
+            
+            progressTask.cancel()
+            
+            let collector = CollectorInstance(
+                name: name,
+                version: version,
+                binaryPath: downloadedBinaryPath,
+                configPath: downloadedConfigPath
+            )
+            appState.addCollector(collector)
+            
+            // Get component information
+            do {
+                downloadStatus = "Getting component information..."
+                let components = try await processManager.getCollectorComponents(collector)
+                
+                var updatedCollector = collector
+                updatedCollector.components = components
+                appState.updateCollector(updatedCollector)
+                isDownloading = false
+                downloadProgress = 0.0
+                downloadStatus = ""
+            } catch {
+                handleError(error, context: "Failed to get collector components")
+                isDownloading = false
+                downloadProgress = 0.0
+                downloadStatus = ""
             }
+        } catch {
+            handleError(error, context: "Failed to create collector directory or download collector")
+            isDownloading = false
+            downloadProgress = 0.0
+            downloadStatus = ""
+            // Clean up the directory on failure
+            try? fileManager.deleteCollector(name: name)
         }
     }
+
     
     func removeCollector(withId id: UUID) {
         guard let collector = appState.getCollector(withId: id) else { return }
         
-        DispatchQueue.main.async {
-            // If this is the active collector, stop it first
-            if self.activeCollector?.id == id {
-                self.stopCollector(withId: id)
-            }
-            
-            self.appState.removeCollector(withId: id)
-            
-            do {
-                try self.fileManager.deleteCollector(name: collector.name)
-            } catch {
-                self.handleError(error, context: "Failed to delete collector")
-            }
+        // If this is the active collector, stop it first
+        if activeCollector?.id == id {
+            stopCollector(withId: id)
+        }
+        
+        appState.removeCollector(withId: id)
+        
+        do {
+            try fileManager.deleteCollector(name: collector.name)
+        } catch {
+            handleError(error, context: "Failed to delete collector")
+        }
+        
+        // Clean up telemetry database for this collector
+        if #available(macOS 15.0, *) {
+            TelemetryDatabase.shared.removeDatabase(for: collector.name)
+            logger.info("Removed telemetry database for collector: \(collector.name)")
         }
     }
     
@@ -184,37 +318,34 @@ class CollectorManager: ObservableObject {
         guard let collector = appState.getCollector(withId: id) else { return }
         
         // Show processing status
-        DispatchQueue.main.async {
-            self.isProcessingOperation = true
-        }
+        isProcessingOperation = true
         
         // Use Task for async operation
         Task {
             do {
-                // Start collector with async/await
-                try await processManager.startCollector(collector)
+                // Inject service telemetry configuration before starting
+                let collectorWithTelemetry = try injectServiceTelemetry(for: collector)
                 
-                // Update UI on main thread
-                await MainActor.run {
-                    // Update collector state
-                    var updatedCollector = collector
-                    updatedCollector.isRunning = true
-                    updatedCollector.pid = Int(processManager.getActiveProcess()?.pid ?? 0)
-                    updatedCollector.startTime = Date()
-                    appState.updateCollector(updatedCollector)
-                    activeCollector = updatedCollector
-                    isProcessingOperation = false
-                    
-                    // Start metrics manager after a short delay
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) {
-                        self.metricsManager.startScraping()
-                    }
-                }
+                // Start collector with async/await
+                try await processManager.startCollector(collectorWithTelemetry)
+                
+                // Update collector state
+                var updatedCollector = collector
+                updatedCollector.isRunning = true
+                updatedCollector.pid = 0  // PID not available with new swift-subprocess API
+                updatedCollector.startTime = Date()
+                appState.updateCollector(updatedCollector)
+                activeCollector = updatedCollector
+                isProcessingOperation = false
+                
+                // Metrics scraping disabled - we now get metrics via OTLP telemetry
+                // Task {
+                //     try await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
+                //     metricsManager.startScraping()
+                // }
             } catch {
-                await MainActor.run {
-                    self.handleError(error, context: "Failed to start collector")
-                    self.isProcessingOperation = false
-                }
+                handleError(error, context: "Failed to start collector")
+                isProcessingOperation = false
             }
         }
     }
@@ -223,48 +354,40 @@ class CollectorManager: ObservableObject {
         guard let collector = appState.getCollector(withId: id) else { return }
         
         // Show processing status
-        DispatchQueue.main.async {
-            self.isProcessingOperation = true
-        }
+        isProcessingOperation = true
         
         // Use Task for async operation
         Task {
-            // Stop metrics manager first
-            await MainActor.run {
-                metricsManager.stopScraping()
-            }
+            // Metrics scraping disabled - no need to stop scraping
+            // metricsManager.stopScraping()
             
             do {
                 // Then stop the collector
                 try await processManager.stopCollector()
                 
-                // Update UI on main thread
-                await MainActor.run {
-                    // Update collector state
-                    var updatedCollector = collector
-                    updatedCollector.isRunning = false
-                    updatedCollector.pid = nil
-                    updatedCollector.startTime = nil
-                    appState.updateCollector(updatedCollector)
-                    activeCollector = nil
-                    isProcessingOperation = false
-                }
+                // Clean up temporary configuration file if it exists
+                cleanupTempConfig(for: collector)
+                
+                // Update collector state
+                var updatedCollector = collector
+                updatedCollector.isRunning = false
+                updatedCollector.pid = nil
+                updatedCollector.startTime = nil
+                appState.updateCollector(updatedCollector)
+                activeCollector = nil
+                isProcessingOperation = false
             } catch ProcessError.notRunning {
                 // If the process isn't running, just update the state
-                await MainActor.run {
-                    var updatedCollector = collector
-                    updatedCollector.isRunning = false
-                    updatedCollector.pid = nil
-                    updatedCollector.startTime = nil
-                    appState.updateCollector(updatedCollector)
-                    activeCollector = nil
-                    isProcessingOperation = false
-                }
+                var updatedCollector = collector
+                updatedCollector.isRunning = false
+                updatedCollector.pid = nil
+                updatedCollector.startTime = nil
+                appState.updateCollector(updatedCollector)
+                activeCollector = nil
+                isProcessingOperation = false
             } catch {
-                await MainActor.run {
-                    self.handleError(error, context: "Failed to stop collector")
-                    self.isProcessingOperation = false
-                }
+                handleError(error, context: "Failed to stop collector")
+                isProcessingOperation = false
             }
         }
     }
@@ -280,42 +403,31 @@ class CollectorManager: ObservableObject {
         do {
             try fileManager.writeConfig(config, to: collector.configPath)
         } catch {
-            DispatchQueue.main.async {
-                self.handleError(error, context: "Failed to write config")
-            }
+            handleError(error, context: "Failed to write config")
         }
     }
     
     func updateCollectorFlags(withId id: UUID, flags: String) {
         guard let collector = appState.getCollector(withId: id) else { return }
         
-        DispatchQueue.main.async {
-            var updatedCollector = collector
-            updatedCollector.commandLineFlags = flags
-            self.appState.updateCollector(updatedCollector)
-        }
+        var updatedCollector = collector
+        updatedCollector.commandLineFlags = flags
+        appState.updateCollector(updatedCollector)
     }
     
-    func getCollectorReleases(repo: String, forceRefresh: Bool = false, completion: @escaping () -> Void = {}) {
-        DispatchQueue.main.async {
-            self.isLoadingReleases = true
-        }
+    func getCollectorReleases(repo: String, forceRefresh: Bool = false) async {
+        isLoadingReleases = true
         
-        releaseManager.getCollectorReleases(repo: repo, forceRefresh: forceRefresh) { [weak self] in
-            DispatchQueue.main.async {
-                self?.isLoadingReleases = false
-                completion()
-            }
-        }
+        await releaseManager.getCollectorReleases(repo: repo, forceRefresh: forceRefresh)
+        
+        isLoadingReleases = false
     }
     
     func listConfigTemplates() -> [URL] {
         do {
             return try fileManager.listConfigTemplates()
         } catch {
-            DispatchQueue.main.async {
-                self.handleError(error, context: "Failed to list config templates")
-            }
+            handleError(error, context: "Failed to list config templates")
             return []
         }
     }
@@ -326,26 +438,19 @@ class CollectorManager: ObservableObject {
         do {
             try fileManager.applyConfigTemplate(named: templateName, to: collector.configPath)
         } catch {
-            DispatchQueue.main.async {
-                self.handleError(error, context: "Failed to apply template")
-            }
+            handleError(error, context: "Failed to apply template")
         }
     }
     
-    func getMetricsManager() -> MetricsManager {
-        return metricsManager
-    }
     
     func refreshCollectorComponents(withId id: UUID) async throws {
         guard let collector = appState.getCollector(withId: id) else { return }
         
         let components = try await processManager.getCollectorComponents(collector)
         
-        await MainActor.run {
-            var updatedCollector = collector
-            updatedCollector.components = components
-            appState.updateCollector(updatedCollector)
-        }
+        var updatedCollector = collector
+        updatedCollector.components = components
+        appState.updateCollector(updatedCollector)
     }
     
     // MARK: - Private Functions

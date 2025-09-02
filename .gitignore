@@ -46,3 +46,9 @@ xcuserdata/
 *.dmg
 *.app
 *.zip
+
+# Crush
+.crush/
+
+# Generated protobuf files
+locol/Generated/
