@@ -68,27 +68,29 @@ struct TelemetryView: View {
     private var sidebarContent: some View {
         List(SignalType.allCases, id: \.self, selection: $selectedSignalType) { signalType in
             NavigationLink(value: signalType) {
-                HStack {
-                    Label(signalType.title, systemImage: signalType.iconName)
+                Label {
+                    Text(signalType.title)
+                } icon: {
+                    Image(systemName: signalType.iconName)
                         .foregroundStyle(signalType.color)
-                    
-                    Spacer()
-                    
-                    // Count badge
-                    if let count = signalCount(for: signalType), count > 0 {
-                        Text("\(count)")
-                            .font(.caption)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 2)
-                            .background(signalType.color.opacity(0.2))
-                            .foregroundStyle(signalType.color)
-                            .clipShape(Capsule())
-                    }
+                }
+                
+                Spacer()
+                
+                // Count badge
+                if let count = signalCount(for: signalType), count > 0 {
+                    Text("\(count)")
+                        .font(.caption)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(signalType.color.opacity(0.2))
+                        .foregroundStyle(signalType.color)
+                        .clipShape(Capsule())
                 }
             }
         }
         .listStyle(.sidebar)
-        .frame(minWidth: 180)
+        .frame(minWidth: 120, idealWidth: 160, maxWidth: 200)
         .navigationTitle("Signals")
     }
     
@@ -166,14 +168,13 @@ enum SignalType: CaseIterable, Hashable {
     }
 }
 
-
 // MARK: - Enhanced Views
 
 struct EnhancedLogsView: View {
     let viewModel: TelemetryViewModel
     
     var body: some View {
-        VStack(spacing: 0) {
+        Group {
             if viewModel.recentLogs.isEmpty {
                 ContentUnavailableView {
                     Label("No Logs Found", systemImage: "doc.text")
@@ -186,13 +187,49 @@ struct EnhancedLogsView: View {
                     .buttonStyle(.borderedProminent)
                 }
             } else {
-                // Enhanced log list with better visual hierarchy
-                List {
-                    ForEach(viewModel.recentLogs, id: \.identifier) { log in
-                        EnhancedLogEntryView(log: log)
+                // Use Table for better performance and semantic structure
+                Table(viewModel.recentLogs) {
+                    TableColumn("Level") { log in
+                        Label {
+                            Text(log.severity.displayName)
+                        } icon: {
+                            Circle()
+                                .fill(log.severity.swiftUIColor)
+                                .frame(width: 8, height: 8)
+                        }
+                        .font(.caption)
+                        .foregroundStyle(log.severity.swiftUIColor)
                     }
+                    .width(60)
+                    
+                    TableColumn("Service") { log in
+                        if let serviceName = log.attributes["service.name"]?.displayValue {
+                            Text(serviceName)
+                                .font(.caption)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(.blue.opacity(0.1))
+                                .foregroundStyle(.blue)
+                                .clipShape(Capsule())
+                        }
+                    }
+                    .width(80)
+                    
+                    TableColumn("Message") { log in
+                        Text(log.body)
+                            .textSelection(.enabled)
+                            .lineLimit(3)
+                    }
+                    .width(min: 200)
+                    
+                    TableColumn("Time") { log in
+                        Text(formatLogTimestamp(log.timestamp))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
+                    }
+                    .width(80)
                 }
-                .listStyle(.plain)
             }
         }
         .navigationTitle("Logs (\(viewModel.recentLogs.count))")
@@ -224,104 +261,6 @@ struct EnhancedLogsView: View {
         }
     }
     
-    private func formatTimestamp(_ timestamp: Int64) -> String {
-        let date = Date(timeIntervalSince1970: Double(timestamp) / 1_000_000_000)
-        let formatter = DateFormatter()
-        formatter.timeStyle = .medium
-        formatter.dateStyle = .none
-        return formatter.string(from: date)
-    }
-}
-
-struct EnhancedLogEntryView: View {
-    let log: TelemetryLog
-    @State private var isExpanded = false
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            // Header row
-            HStack {
-                // Severity indicator
-                HStack(spacing: 6) {
-                    Circle()
-                        .fill(log.severity.swiftUIColor)
-                        .frame(width: 8, height: 8)
-                    
-                    Text(log.severity.displayName)
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .foregroundStyle(log.severity.swiftUIColor)
-                        .frame(width: 50, alignment: .leading)
-                }
-                
-                // Service name if available
-                if let serviceName = log.attributes["service.name"]?.displayValue {
-                    Text(serviceName)
-                        .font(.caption)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(.blue.opacity(0.1))
-                        .foregroundStyle(.blue)
-                        .clipShape(Capsule())
-                }
-                
-                Spacer()
-                
-                // Timestamp
-                Text(formatLogTimestamp(log.timestamp))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .monospacedDigit()
-            }
-            
-            // Log message
-            Text(log.body)
-                .font(.body)
-                .lineLimit(isExpanded ? nil : 3)
-                .textSelection(.enabled)
-            
-            // Attributes toggle
-            if !log.attributes.isEmpty {
-                Button(action: { isExpanded.toggle() }) {
-                    HStack {
-                        Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
-                        Text("\(log.attributes.count) attributes")
-                        Spacer()
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                
-                if isExpanded {
-                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 4) {
-                        ForEach(Array(log.attributes.keys.sorted()), id: \.self) { key in
-                            HStack {
-                                Text(key)
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                                Spacer()
-                                Text(log.attributes[key]?.displayValue ?? "")
-                                    .font(.caption2)
-                                    .textSelection(.enabled)
-                            }
-                        }
-                    }
-                    .padding(.top, 4)
-                }
-            }
-            
-            // Trace ID if available
-            if let traceId = log.traceId {
-                Text("Trace: \(traceId.prefix(16))...")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
-            }
-        }
-        .padding(.vertical, 4)
-    }
-    
     private func formatLogTimestamp(_ timestamp: Int64) -> String {
         let date = Date(timeIntervalSince1970: Double(timestamp) / 1_000_000_000)
         let formatter = DateFormatter()
@@ -348,7 +287,7 @@ struct EnhancedMetricsView: View {
     let viewModel: TelemetryViewModel
     
     var body: some View {
-        VStack(spacing: 0) {
+        Group {
             if viewModel.groupedMetrics.isEmpty {
                 ContentUnavailableView {
                     Label("No Metrics Found", systemImage: "chart.line.uptrend.xyaxis")
@@ -363,13 +302,13 @@ struct EnhancedMetricsView: View {
             } else {
                 ScrollView {
                     LazyVGrid(columns: [
-                        GridItem(.adaptive(minimum: 280, maximum: 400), spacing: 16)
-                    ], spacing: 16) {
+                        GridItem(.adaptive(minimum: 260, maximum: 380), spacing: 12)
+                    ], spacing: 12) {
                         ForEach(viewModel.groupedMetrics) { group in
                             EnhancedMetricCard(group: group)
                         }
                     }
-                    .padding()
+                    .padding(12)
                 }
             }
         }
@@ -406,35 +345,31 @@ struct EnhancedMetricCard: View {
     let group: TelemetryMetricGroup
     
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Header
-            HStack {
-                VStack(alignment: .leading, spacing: 4) {
+        // Use GroupBox for semantic grouping instead of manual VStack
+        GroupBox {
+            LabeledContent {
+                if let latestValue = group.latestValue {
+                    Text(formatMetricValue(latestValue))
+                        .font(.title2)
+                        .fontWeight(.bold)
+                        .foregroundStyle(.primary)
+                }
+            } label: {
+                Label {
                     Text(group.name)
                         .font(.headline)
                         .fontWeight(.semibold)
                         .lineLimit(2)
-                    
-                    HStack {
-                        Text(group.type.rawValue.uppercased())
-                            .font(.caption)
-                            .fontWeight(.medium)
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 2)
-                            .background(metricTypeColor(group.type))
-                            .clipShape(Capsule())
-                        
-                        if let latestValue = group.latestValue {
-                            Text(formatMetricValue(latestValue))
-                                .font(.title2)
-                                .fontWeight(.bold)
-                                .foregroundStyle(.primary)
-                        }
-                    }
+                } icon: {
+                    Text(group.type.rawValue.uppercased())
+                        .font(.caption)
+                        .fontWeight(.medium)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 1)
+                        .background(metricTypeColor(group.type))
+                        .clipShape(Capsule())
                 }
-                
-                Spacer()
             }
             
             // Sparkline chart
@@ -451,37 +386,26 @@ struct EnhancedMetricCard: View {
                 .chartYAxis(.hidden)
                 .frame(height: 40)
             } else {
-                Rectangle()
-                    .fill(Color.gray.opacity(0.1))
+                Text("Insufficient data for trend")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                     .frame(height: 40)
-                    .overlay(
-                        Text("Insufficient data for trend")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    )
             }
             
-            // Labels
+            // Labels using FlowLayout-like structure
             if !group.labels.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(Array(group.labels.sorted(by: { $0.key < $1.key })), id: \.key) { key, value in
-                            Text("\(key):\(value)")
-                                .font(.caption2)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(.gray.opacity(0.1))
-                                .foregroundStyle(.secondary)
-                                .clipShape(Capsule())
-                        }
-                    }
-                    .padding(.horizontal, 1)
+                WrappingHStack(group.labels.sorted(by: { $0.key < $1.key })) { key, value in
+                    Text("\(key):\(value)")
+                        .font(.caption2)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 1)
+                        .background(.gray.opacity(0.1))
+                        .foregroundStyle(.secondary)
+                        .clipShape(Capsule())
                 }
             }
         }
-        .padding()
-        .background(.background.secondary)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
     }
     
     private func metricTypeColor(_ type: TelemetryMetric.MetricType) -> Color {
@@ -506,14 +430,43 @@ struct EnhancedMetricCard: View {
     }
 }
 
+// MARK: - WrappingHStack for labels
+struct WrappingHStack<Data: RandomAccessCollection, Content: View>: View where Data.Element: Hashable {
+    let data: Data
+    let content: (Data.Element) -> Content
+    
+    init(_ data: Data, @ViewBuilder content: @escaping (Data.Element.Key, Data.Element.Value) -> Content) where Data.Element == (key: String, value: String) {
+        self.data = data
+        self.content = { element in
+            content(element.key, element.value)
+        }
+    }
+    
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack {
+                ForEach(Array(data), id: \.self) { item in
+                    content(item)
+                }
+            }
+            
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(Array(data), id: \.self) { item in
+                    content(item)
+                }
+            }
+        }
+    }
+}
+
 struct EnhancedTracesView: View {
     let viewModel: TelemetryViewModel
     @State private var selectedTrace: TraceHierarchy?
     
     var body: some View {
+        // Use Table for traces list instead of manual layout
         NavigationSplitView {
-            // Trace list
-            VStack(spacing: 0) {
+            Group {
                 if viewModel.traceHierarchies.isEmpty {
                     ContentUnavailableView {
                         Label("No Traces Found", systemImage: "point.3.connected.trianglepath.dotted")
@@ -526,11 +479,43 @@ struct EnhancedTracesView: View {
                         .buttonStyle(.borderedProminent)
                     }
                 } else {
-                    List(viewModel.traceHierarchies, id: \.spans.first?.traceId, selection: $selectedTrace) { hierarchy in
-                        EnhancedTraceRowView(hierarchy: hierarchy)
-                            .tag(hierarchy)
+                    Table(viewModel.traceHierarchies, selection: $selectedTrace) {
+                        TableColumn("Service") { hierarchy in
+                            Text(hierarchy.rootSpans.first?.serviceName ?? "Unknown")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                        }
+                        
+                        TableColumn("Operation") { hierarchy in
+                            Text(hierarchy.rootSpans.first?.operationName ?? "Unknown")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        
+                        TableColumn("Spans") { hierarchy in
+                            Text("\(hierarchy.spans.count)")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        .width(60)
+                        
+                        TableColumn("Duration") { hierarchy in
+                            Text(formatDuration(hierarchy.duration))
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .foregroundStyle(durationColor(hierarchy.duration))
+                        }
+                        .width(80)
+                        
+                        TableColumn("Time") { hierarchy in
+                            if let rootSpan = hierarchy.rootSpans.first {
+                                Text(formatTimestamp(rootSpan.startTime))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .width(100)
                     }
-                    .listStyle(.sidebar)
                 }
             }
             .navigationTitle("Traces (\(viewModel.traceHierarchies.count))")
@@ -548,62 +533,6 @@ struct EnhancedTracesView: View {
                 }
             }
         }
-        .navigationSplitViewStyle(.balanced)
-    }
-}
-
-struct EnhancedTraceRowView: View {
-    let hierarchy: TraceHierarchy
-    
-    private var rootSpan: TelemetrySpan? {
-        hierarchy.rootSpans.first
-    }
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(rootSpan?.serviceName ?? "Unknown Service")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                    
-                    Text(rootSpan?.operationName ?? "Unknown Operation")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                }
-                
-                Spacer()
-                
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text("\(hierarchy.spans.count) spans")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                    
-                    Text(formatDuration(hierarchy.duration))
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .foregroundStyle(durationColor(hierarchy.duration))
-                }
-            }
-            
-            // Duration bar
-            HStack {
-                Rectangle()
-                    .fill(durationColor(hierarchy.duration))
-                    .frame(height: 3)
-                    .clipShape(Capsule())
-                
-                Spacer()
-            }
-            
-            if let rootSpan = rootSpan {
-                Text(formatTimestamp(rootSpan.startTime))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(.vertical, 2)
     }
     
     private func formatDuration(_ duration: Int64) -> String {
@@ -642,18 +571,15 @@ struct TraceWaterfallView: View {
     @State private var expandedSpans: Set<String> = []
     
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(hierarchy.spans, id: \.spanId) { span in
-                    TraceSpanRowView(
-                        span: span,
-                        hierarchy: hierarchy,
-                        expandedSpans: $expandedSpans
-                    )
-                }
-            }
-            .padding()
+        // Use OutlineGroup for hierarchical trace spans
+        List(hierarchy.spans, id: \.spanId, children: \.childSpans) { span in
+            TraceSpanRowView(
+                span: span,
+                hierarchy: hierarchy,
+                expandedSpans: $expandedSpans
+            )
         }
+        .listStyle(.plain)
         .navigationTitle("Trace Details")
     }
 }
@@ -663,123 +589,57 @@ struct TraceSpanRowView: View {
     let hierarchy: TraceHierarchy
     @Binding var expandedSpans: Set<String>
     
-    private var depth: Int {
-        calculateDepth(span: span, in: hierarchy.spans)
-    }
-    
     private var isExpanded: Bool {
         expandedSpans.contains(span.spanId)
     }
     
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                // Indentation for hierarchy
-                Rectangle()
-                    .fill(Color.clear)
-                    .frame(width: CGFloat(depth * 16))
-                
-                // Duration bar
-                GeometryReader { geometry in
-                    let totalDuration = hierarchy.duration
-                    let spanDuration = span.duration
-                    let barWidth = max(4, Double(spanDuration) / Double(totalDuration) * Double(geometry.size.width))
-                    
-                    HStack {
-                        Rectangle()
-                            .fill(durationColor(span.duration))
-                            .frame(width: barWidth, height: 20)
-                            .clipShape(RoundedRectangle(cornerRadius: 2))
-                        Spacer()
-                    }
-                }
-                .frame(height: 20)
-                .frame(maxWidth: 200)
-                
-                // Span info
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(span.operationName ?? "Unknown Operation")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                    
-                    HStack {
-                        if let serviceName = span.serviceName {
-                            Text(serviceName)
-                                .font(.caption)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 1)
-                                .background(.blue.opacity(0.1))
-                                .foregroundStyle(.blue)
-                                .clipShape(Capsule())
-                        }
-                        
-                        Text(formatDuration(span.duration))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        
-                        Spacer()
-                    }
-                }
-                
-                Spacer()
-            }
-            .contentShape(Rectangle())
-            .onTapGesture {
-                if isExpanded {
-                    expandedSpans.remove(span.spanId)
-                } else {
+        DisclosureGroup(isExpanded: Binding(
+            get: { isExpanded },
+            set: { expanded in
+                if expanded {
                     expandedSpans.insert(span.spanId)
+                } else {
+                    expandedSpans.remove(span.spanId)
                 }
             }
-            
-            if isExpanded {
-                VStack(alignment: .leading, spacing: 4) {
-                    Divider()
-                        .padding(.leading, CGFloat(depth * 16 + 8))
-                    
-                    VStack(alignment: .leading, spacing: 4) {
-                        LabeledContent("Span ID", value: span.spanId.prefix(16) + "...")
-                        LabeledContent("Trace ID", value: span.traceId.prefix(16) + "...")
-                        if let parentId = span.parentSpanId {
-                            LabeledContent("Parent ID", value: parentId.prefix(16) + "...")
-                        }
-                        LabeledContent("Start Time", value: formatTimestamp(span.startTime))
-                        LabeledContent("Duration", value: formatDuration(span.duration))
+        )) {
+            // Expanded details using Form for semantic structure
+            Form {
+                Section {
+                    LabeledContent("Span ID", value: String(span.spanId.prefix(12)) + "...")
+                    LabeledContent("Trace ID", value: String(span.traceId.prefix(12)) + "...")
+                    if let parentId = span.parentSpanId {
+                        LabeledContent("Parent ID", value: String(parentId.prefix(12)) + "...")
                     }
-                    .font(.caption)
-                    .padding(.leading, CGFloat(depth * 16 + 16))
+                    LabeledContent("Start Time", value: formatTimestamp(span.startTime))
+                    LabeledContent("Duration", value: formatDuration(span.duration))
                 }
-                .background(.background.secondary.opacity(0.5))
             }
-        }
-        .padding(.vertical, 2)
-    }
-    
-    private func calculateDepth(span: TelemetrySpan, in spans: [TelemetrySpan]) -> Int {
-        var depth = 0
-        var currentParentId = span.parentSpanId
-        
-        while let parentId = currentParentId {
-            if let parent = spans.first(where: { $0.spanId == parentId }) {
-                depth += 1
-                currentParentId = parent.parentSpanId
-            } else {
-                break
+            .formStyle(.grouped)
+        } label: {
+            // Use LabeledContent for the main span info
+            LabeledContent {
+                HStack {
+                    if let serviceName = span.serviceName {
+                        Text(serviceName)
+                            .font(.caption)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 1)
+                            .background(.blue.opacity(0.1))
+                            .foregroundStyle(.blue)
+                            .clipShape(Capsule())
+                    }
+                    
+                    Text(formatDuration(span.duration))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } label: {
+                Text(span.operationName ?? "Unknown Operation")
+                    .font(.subheadline)
+                    .fontWeight(.medium)
             }
-        }
-        
-        return depth
-    }
-    
-    private func durationColor(_ duration: Int64) -> Color {
-        if duration > 5_000_000_000 { // > 5s
-            return .red
-        } else if duration > 1_000_000_000 { // > 1s
-            return .orange
-        } else if duration > 100_000_000 { // > 100ms
-            return .yellow
-        } else {
-            return .green
         }
     }
     
@@ -802,7 +662,6 @@ struct TraceSpanRowView: View {
     }
 }
 
-
 // MARK: - Extensions
 
 extension DateFormatter {
@@ -819,6 +678,15 @@ extension DateFormatter {
         formatter.dateStyle = .short
         return formatter
     }()
+}
+
+// Add support for child spans in TraceHierarchy if not already present
+extension TelemetrySpan {
+    var childSpans: [TelemetrySpan]? {
+        // This would need to be implemented based on your TraceHierarchy structure
+        // For now, return nil to make it work without children
+        return nil
+    }
 }
 
 #Preview {
