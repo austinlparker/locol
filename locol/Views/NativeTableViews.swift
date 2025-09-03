@@ -80,7 +80,7 @@ struct LogsTableView: NSViewRepresentable {
             return Array(logs.filter { log in
                 log.body.localizedCaseInsensitiveContains(searchText) ||
                 log.severity.displayName.localizedCaseInsensitiveContains(searchText) ||
-                (log.attributes["service.name"]?.displayValue?.localizedCaseInsensitiveContains(searchText) ?? false)
+                (log.attributes["service.name"]?.displayValue.localizedCaseInsensitiveContains(searchText) ?? false)
             }.prefix(1000))
         }
     }
