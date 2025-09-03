@@ -168,10 +168,11 @@ enum SignalType: CaseIterable, Hashable {
     }
 }
 
-// MARK: - Enhanced Views
+// MARK: - Enhanced Views with NSTableView
 
 struct EnhancedLogsView: View {
     let viewModel: TelemetryViewModel
+    @State private var selectedLog: TelemetryLog?
     
     var body: some View {
         Group {
@@ -187,49 +188,12 @@ struct EnhancedLogsView: View {
                     .buttonStyle(.borderedProminent)
                 }
             } else {
-                // Use Table for better performance and semantic structure
-                Table(viewModel.recentLogs, id: \.identifier) {
-                    TableColumn("Level") { log in
-                        Label {
-                            Text(log.severity.displayName)
-                        } icon: {
-                            Circle()
-                                .fill(log.severity.swiftUIColor)
-                                .frame(width: 8, height: 8)
-                        }
-                        .font(.caption)
-                        .foregroundStyle(log.severity.swiftUIColor)
-                    }
-                    .width(60)
-                    
-                    TableColumn("Service") { log in
-                        if let serviceName = log.attributes["service.name"]?.displayValue {
-                            Text(serviceName)
-                                .font(.caption)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
-                                .background(.blue.opacity(0.1))
-                                .foregroundStyle(.blue)
-                                .clipShape(Capsule())
-                        }
-                    }
-                    .width(80)
-                    
-                    TableColumn("Message") { log in
-                        Text(log.body)
-                            .textSelection(.enabled)
-                            .lineLimit(3)
-                    }
-                    .width(min: 200)
-                    
-                    TableColumn("Time") { log in
-                        Text(formatLogTimestamp(log.timestamp))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .monospacedDigit()
-                    }
-                    .width(80)
-                }
+                // Use high-performance NSTableView
+                LogsTableView(
+                    logs: viewModel.recentLogs,
+                    searchText: viewModel.searchText,
+                    selectedLog: $selectedLog
+                )
             }
         }
         .navigationTitle("Logs (\(viewModel.recentLogs.count))")
@@ -259,14 +223,6 @@ struct EnhancedLogsView: View {
                 }
             }
         }
-    }
-    
-    private func formatLogTimestamp(_ timestamp: Int64) -> String {
-        let date = Date(timeIntervalSince1970: Double(timestamp) / 1_000_000_000)
-        let formatter = DateFormatter()
-        formatter.timeStyle = .medium
-        formatter.dateStyle = .none
-        return formatter.string(from: date)
     }
 }
 
@@ -300,16 +256,8 @@ struct EnhancedMetricsView: View {
                     .buttonStyle(.borderedProminent)
                 }
             } else {
-                ScrollView {
-                    LazyVGrid(columns: [
-                        GridItem(.adaptive(minimum: 260, maximum: 380), spacing: 12)
-                    ], spacing: 12) {
-                        ForEach(viewModel.groupedMetrics) { group in
-                            EnhancedMetricCard(group: group)
-                        }
-                    }
-                    .padding(12)
-                }
+                // Use high-performance NSCollectionView
+                MetricsCollectionView(metrics: viewModel.groupedMetrics)
             }
         }
         .navigationTitle("Metrics (\(viewModel.groupedMetrics.count))")
@@ -341,107 +289,11 @@ struct EnhancedMetricsView: View {
     }
 }
 
-struct EnhancedMetricCard: View {
-    let group: TelemetryMetricGroup
-    
-    var body: some View {
-        // Use GroupBox for semantic grouping instead of manual VStack
-        GroupBox {
-            LabeledContent {
-                if let latestValue = group.latestValue {
-                    Text(formatMetricValue(latestValue))
-                        .font(.title2)
-                        .fontWeight(.bold)
-                        .foregroundStyle(.primary)
-                }
-            } label: {
-                Label {
-                    Text(group.name)
-                        .font(.headline)
-                        .fontWeight(.semibold)
-                        .lineLimit(2)
-                } icon: {
-                    Text(group.type.rawValue.uppercased())
-                        .font(.caption)
-                        .fontWeight(.medium)
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                        .background(metricTypeColor(group.type))
-                        .clipShape(Capsule())
-                }
-            }
-            
-            // Sparkline chart
-            if group.metrics.count > 1 {
-                Chart(group.metrics, id: \.timestamp) { metric in
-                    LineMark(
-                        x: .value("Time", Date(timeIntervalSince1970: Double(metric.timestamp) / 1_000_000_000)),
-                        y: .value("Value", metric.value ?? 0)
-                    )
-                    .foregroundStyle(metricTypeColor(group.type))
-                    .lineStyle(StrokeStyle(lineWidth: 2))
-                }
-                .chartXAxis(.hidden)
-                .chartYAxis(.hidden)
-                .frame(height: 40)
-            } else {
-                Text("Insufficient data for trend")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(height: 40)
-            }
-            
-            // Labels using simple ScrollView
-            if !group.labels.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(Array(group.labels.sorted(by: { $0.key < $1.key })), id: \.key) { key, value in
-                            Text("\(key):\(value)")
-                                .font(.caption2)
-                                .padding(.horizontal, 4)
-                                .padding(.vertical, 1)
-                                .background(.gray.opacity(0.1))
-                                .foregroundStyle(.secondary)
-                                .clipShape(Capsule())
-                        }
-                    }
-                    .padding(.horizontal, 1)
-                }
-            }
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-    
-    private func metricTypeColor(_ type: TelemetryMetric.MetricType) -> Color {
-        switch type {
-        case .counter: return .blue
-        case .gauge: return .green
-        case .histogram: return .purple
-        case .summary: return .orange
-        }
-    }
-    
-    private func formatMetricValue(_ value: Double) -> String {
-        if value >= 1_000_000 {
-            return String(format: "%.1fM", value / 1_000_000)
-        } else if value >= 1_000 {
-            return String(format: "%.1fK", value / 1_000)
-        } else if value < 1 {
-            return String(format: "%.3f", value)
-        } else {
-            return String(format: "%.1f", value)
-        }
-    }
-}
-
-
 struct EnhancedTracesView: View {
     let viewModel: TelemetryViewModel
     @State private var selectedTrace: TraceHierarchy?
     
     var body: some View {
-        // Use Table for traces list instead of manual layout
         NavigationSplitView {
             Group {
                 if viewModel.traceHierarchies.isEmpty {
@@ -456,43 +308,11 @@ struct EnhancedTracesView: View {
                         .buttonStyle(.borderedProminent)
                     }
                 } else {
-                    Table(viewModel.traceHierarchies, id: \.spans.first?.traceId, selection: $selectedTrace) {
-                        TableColumn("Service") { hierarchy in
-                            Text(hierarchy.rootSpans.first?.serviceName ?? "Unknown")
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                        }
-                        
-                        TableColumn("Operation") { hierarchy in
-                            Text(hierarchy.rootSpans.first?.operationName ?? "Unknown")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                        
-                        TableColumn("Spans") { hierarchy in
-                            Text("\(hierarchy.spans.count)")
-                                .font(.caption2)
-                                .foregroundStyle(.secondary)
-                        }
-                        .width(60)
-                        
-                        TableColumn("Duration") { hierarchy in
-                            Text(formatDuration(hierarchy.duration))
-                                .font(.caption)
-                                .fontWeight(.medium)
-                                .foregroundStyle(durationColor(hierarchy.duration))
-                        }
-                        .width(80)
-                        
-                        TableColumn("Time") { hierarchy in
-                            if let rootSpan = hierarchy.rootSpans.first {
-                                Text(formatTimestamp(rootSpan.startTime))
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        .width(100)
-                    }
+                    // Use high-performance NSTableView
+                    TracesTableView(
+                        traces: viewModel.traceHierarchies,
+                        selectedTrace: $selectedTrace
+                    )
                 }
             }
             .navigationTitle("Traces (\(viewModel.traceHierarchies.count))")
@@ -510,36 +330,6 @@ struct EnhancedTracesView: View {
                 }
             }
         }
-    }
-    
-    private func formatDuration(_ duration: Int64) -> String {
-        if duration > 1_000_000_000 {
-            return String(format: "%.1fs", Double(duration) / 1_000_000_000)
-        } else if duration > 1_000_000 {
-            return String(format: "%.1fms", Double(duration) / 1_000_000)
-        } else {
-            return String(format: "%.1fμs", Double(duration) / 1_000)
-        }
-    }
-    
-    private func durationColor(_ duration: Int64) -> Color {
-        if duration > 5_000_000_000 { // > 5s
-            return .red
-        } else if duration > 1_000_000_000 { // > 1s
-            return .orange
-        } else if duration > 100_000_000 { // > 100ms
-            return .yellow
-        } else {
-            return .green
-        }
-    }
-    
-    private func formatTimestamp(_ timestamp: Int64) -> String {
-        let date = Date(timeIntervalSince1970: Double(timestamp) / 1_000_000_000)
-        let formatter = DateFormatter()
-        formatter.timeStyle = .medium
-        formatter.dateStyle = .none
-        return formatter.string(from: date)
     }
 }
 
