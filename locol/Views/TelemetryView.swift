@@ -188,7 +188,7 @@ struct EnhancedLogsView: View {
                 }
             } else {
                 // Use Table for better performance and semantic structure
-                Table(viewModel.recentLogs) {
+                Table(viewModel.recentLogs, id: \.identifier) {
                     TableColumn("Level") { log in
                         Label {
                             Text(log.severity.displayName)
@@ -392,16 +392,21 @@ struct EnhancedMetricCard: View {
                     .frame(height: 40)
             }
             
-            // Labels using FlowLayout-like structure
+            // Labels using simple ScrollView
             if !group.labels.isEmpty {
-                WrappingHStack(group.labels.sorted(by: { $0.key < $1.key })) { key, value in
-                    Text("\(key):\(value)")
-                        .font(.caption2)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 1)
-                        .background(.gray.opacity(0.1))
-                        .foregroundStyle(.secondary)
-                        .clipShape(Capsule())
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(Array(group.labels.sorted(by: { $0.key < $1.key })), id: \.key) { key, value in
+                            Text("\(key):\(value)")
+                                .font(.caption2)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(.gray.opacity(0.1))
+                                .foregroundStyle(.secondary)
+                                .clipShape(Capsule())
+                        }
+                    }
+                    .padding(.horizontal, 1)
                 }
             }
         }
@@ -430,34 +435,6 @@ struct EnhancedMetricCard: View {
     }
 }
 
-// MARK: - WrappingHStack for labels
-struct WrappingHStack<Data: RandomAccessCollection, Content: View>: View where Data.Element: Hashable {
-    let data: Data
-    let content: (Data.Element) -> Content
-    
-    init(_ data: Data, @ViewBuilder content: @escaping (Data.Element.Key, Data.Element.Value) -> Content) where Data.Element == (key: String, value: String) {
-        self.data = data
-        self.content = { element in
-            content(element.key, element.value)
-        }
-    }
-    
-    var body: some View {
-        ViewThatFits(in: .horizontal) {
-            HStack {
-                ForEach(Array(data), id: \.self) { item in
-                    content(item)
-                }
-            }
-            
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(Array(data), id: \.self) { item in
-                    content(item)
-                }
-            }
-        }
-    }
-}
 
 struct EnhancedTracesView: View {
     let viewModel: TelemetryViewModel
@@ -479,7 +456,7 @@ struct EnhancedTracesView: View {
                         .buttonStyle(.borderedProminent)
                     }
                 } else {
-                    Table(viewModel.traceHierarchies, selection: $selectedTrace) {
+                    Table(viewModel.traceHierarchies, id: \.spans.first?.traceId, selection: $selectedTrace) {
                         TableColumn("Service") { hierarchy in
                             Text(hierarchy.rootSpans.first?.serviceName ?? "Unknown")
                                 .font(.subheadline)
