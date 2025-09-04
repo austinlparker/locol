@@ -372,7 +372,7 @@ struct EnhancedTracesView: View {
     @State private var selectedTrace: TraceHierarchy?
     
     var body: some View {
-        HStack(spacing: 1) {
+        HSplitView {
             // Trace list (left side)
             VStack(spacing: 0) {
                 if viewModel.traceHierarchies.isEmpty {
@@ -394,10 +394,9 @@ struct EnhancedTracesView: View {
                     )
                 }
             }
-            .frame(minWidth: 300, idealWidth: 400, maxWidth: 500)
+            .frame(minWidth: 250)
+            .layoutPriority(0.3)
             .background(.background.secondary)
-            
-            Divider()
             
             // Trace waterfall detail (right side)
             Group {
@@ -411,7 +410,8 @@ struct EnhancedTracesView: View {
                     }
                 }
             }
-            .frame(maxWidth: .infinity)
+            .frame(minWidth: 400)
+            .layoutPriority(0.7)
         }
     }
 }

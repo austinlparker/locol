@@ -106,7 +106,8 @@ struct SQLQueryView: View {
                             .font(.caption)
                     }
                 }
-                .frame(minWidth: 300, idealWidth: 400)
+                .frame(minWidth: 250)
+                .layoutPriority(0.4)
                 .padding()
                 
                 // Results table (right side)
@@ -138,7 +139,8 @@ struct SQLQueryView: View {
                         }
                     }
                 }
-                .frame(minWidth: 400)
+                .frame(minWidth: 300)
+                .layoutPriority(0.6)
                 .padding()
             }
         }
