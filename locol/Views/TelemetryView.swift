@@ -241,6 +241,7 @@ extension LogSeverity {
 
 struct EnhancedMetricsView: View {
     let viewModel: TelemetryViewModel
+    @State private var selectedMetric: TelemetryMetricGroup?
     
     var body: some View {
         Group {
@@ -256,8 +257,11 @@ struct EnhancedMetricsView: View {
                     .buttonStyle(.borderedProminent)
                 }
             } else {
-                // Use high-performance NSCollectionView
-                MetricsCollectionView(metrics: viewModel.groupedMetrics)
+                // Use compact NSTableView for better screen utilization
+                MetricsTableView(
+                    metrics: viewModel.groupedMetrics,
+                    selectedMetric: $selectedMetric
+                )
             }
         }
         .navigationTitle("Metrics (\(viewModel.groupedMetrics.count))")
@@ -338,94 +342,12 @@ struct TraceWaterfallView: View {
     @State private var expandedSpans: Set<String> = []
     
     var body: some View {
-        // Use OutlineGroup for hierarchical trace spans
-        List(hierarchy.spans, id: \.spanId, children: \.childSpans) { span in
-            TraceSpanRowView(
-                span: span,
-                hierarchy: hierarchy,
-                expandedSpans: $expandedSpans
-            )
-        }
-        .listStyle(.plain)
+        // Use high-performance NSOutlineView for hierarchical spans
+        TraceWaterfallOutlineView(
+            hierarchy: hierarchy,
+            expandedSpans: $expandedSpans
+        )
         .navigationTitle("Trace Details")
-    }
-}
-
-struct TraceSpanRowView: View {
-    let span: TelemetrySpan
-    let hierarchy: TraceHierarchy
-    @Binding var expandedSpans: Set<String>
-    
-    private var isExpanded: Bool {
-        expandedSpans.contains(span.spanId)
-    }
-    
-    var body: some View {
-        DisclosureGroup(isExpanded: Binding(
-            get: { isExpanded },
-            set: { expanded in
-                if expanded {
-                    expandedSpans.insert(span.spanId)
-                } else {
-                    expandedSpans.remove(span.spanId)
-                }
-            }
-        )) {
-            // Expanded details using Form for semantic structure
-            Form {
-                Section {
-                    LabeledContent("Span ID", value: String(span.spanId.prefix(12)) + "...")
-                    LabeledContent("Trace ID", value: String(span.traceId.prefix(12)) + "...")
-                    if let parentId = span.parentSpanId {
-                        LabeledContent("Parent ID", value: String(parentId.prefix(12)) + "...")
-                    }
-                    LabeledContent("Start Time", value: formatTimestamp(span.startTime))
-                    LabeledContent("Duration", value: formatDuration(span.duration))
-                }
-            }
-            .formStyle(.grouped)
-        } label: {
-            // Use LabeledContent for the main span info
-            LabeledContent {
-                HStack {
-                    if let serviceName = span.serviceName {
-                        Text(serviceName)
-                            .font(.caption)
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
-                            .background(.blue.opacity(0.1))
-                            .foregroundStyle(.blue)
-                            .clipShape(Capsule())
-                    }
-                    
-                    Text(formatDuration(span.duration))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            } label: {
-                Text(span.operationName ?? "Unknown Operation")
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-            }
-        }
-    }
-    
-    private func formatDuration(_ duration: Int64) -> String {
-        if duration > 1_000_000_000 {
-            return String(format: "%.1fs", Double(duration) / 1_000_000_000)
-        } else if duration > 1_000_000 {
-            return String(format: "%.1fms", Double(duration) / 1_000_000)
-        } else {
-            return String(format: "%.1fμs", Double(duration) / 1_000)
-        }
-    }
-    
-    private func formatTimestamp(_ timestamp: Int64) -> String {
-        let date = Date(timeIntervalSince1970: Double(timestamp) / 1_000_000_000)
-        let formatter = DateFormatter()
-        formatter.timeStyle = .medium
-        formatter.dateStyle = .short
-        return formatter.string(from: date)
     }
 }
 
@@ -447,14 +369,6 @@ extension DateFormatter {
     }()
 }
 
-// Add support for child spans in TraceHierarchy if not already present
-extension TelemetrySpan {
-    var childSpans: [TelemetrySpan]? {
-        // This would need to be implemented based on your TraceHierarchy structure
-        // For now, return nil to make it work without children
-        return nil
-    }
-}
 
 #Preview {
     TelemetryView(collectorManager: CollectorManager())
