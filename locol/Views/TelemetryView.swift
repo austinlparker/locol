@@ -6,6 +6,7 @@ struct TelemetryView: View {
     let collectorManager: CollectorManager?
     @State private var viewModel: TelemetryViewModel
     @State private var selectedSignalType: SignalType = .traces
+    @State private var viewMode: TelemetryViewMode = .visual
     
     init(collectorManager: CollectorManager) {
         self.collectorManager = collectorManager
@@ -24,18 +25,41 @@ struct TelemetryView: View {
     }
     
     var body: some View {
-        NavigationSplitView {
-            // Sidebar with signal types
-            sidebarContent
-        } detail: {
-            // Detail view for selected signal type
-            detailContent
+        VStack(spacing: 0) {
+            // Unified toolbar
+            unifiedToolbar
+            
+            // Content area based on view mode
+            Group {
+                switch viewMode {
+                case .visual:
+                    visualModeContent
+                case .sql:
+                    SQLQueryView(collectorName: viewModel.selectedCollector)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .navigationSplitViewStyle(.balanced)
         .navigationTitle("OTLP Telemetry")
-        .toolbar {
-            // Collector selection (only show when collectorManager is available)
-            ToolbarItemGroup(placement: .navigation) {
+    }
+    
+    private var unifiedToolbar: some View {
+        VStack(spacing: 8) {
+            // Top row: Mode toggle and collector selector
+            HStack {
+                // View mode toggle
+                Picker("View Mode", selection: $viewMode) {
+                    ForEach(TelemetryViewMode.allCases, id: \.self) { mode in
+                        Label(mode.title, systemImage: mode.iconName)
+                            .tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 200)
+                
+                Spacer()
+                
+                // Collector selection (only show when collectorManager is available)
                 if collectorManager != nil {
                     Menu {
                         ForEach(viewModel.availableCollectors, id: \.self) { collector in
@@ -49,50 +73,67 @@ struct TelemetryView: View {
                 }
             }
             
-            // Time range selector
-            ToolbarItemGroup(placement: .automatic) {
-                Picker("Time Range", selection: Binding(
-                    get: { viewModel.selectedTimeRange },
-                    set: { viewModel.updateTimeRange($0) }
-                )) {
-                    ForEach(TelemetryTimeRange.allCases) { range in
-                        Text(range.displayName)
-                            .tag(range)
+            // Second row: Visual mode controls (only show in visual mode)
+            if viewMode == .visual {
+                HStack {
+                    // Signal type picker
+                    Picker("Signal Type", selection: $selectedSignalType) {
+                        ForEach(SignalType.allCases, id: \.self) { signalType in
+                            Label {
+                                Text("\(signalType.title) (\(signalCount(for: signalType) ?? 0))")
+                            } icon: {
+                                Image(systemName: signalType.iconName)
+                            }
+                            .tag(signalType)
+                        }
                     }
+                    .pickerStyle(.segmented)
+                    
+                    Spacer()
+                    
+                    // Time range selector
+                    Picker("Time Range", selection: Binding(
+                        get: { viewModel.selectedTimeRange },
+                        set: { viewModel.updateTimeRange($0) }
+                    )) {
+                        ForEach(TelemetryTimeRange.allCases) { range in
+                            Text(range.displayName)
+                                .tag(range)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .frame(width: 150)
+                    
+                    // Search field for current signal type
+                    searchField
                 }
-                .pickerStyle(.menu)
             }
         }
+        .padding()
+        .background(.background.secondary)
     }
     
-    private var sidebarContent: some View {
-        List(SignalType.allCases, id: \.self, selection: $selectedSignalType) { signalType in
-            NavigationLink(value: signalType) {
-                Label {
-                    Text(signalType.title)
-                } icon: {
-                    Image(systemName: signalType.iconName)
-                        .foregroundStyle(signalType.color)
-                }
-                
-                Spacer()
-                
-                // Count badge
-                if let count = signalCount(for: signalType), count > 0 {
-                    Text("\(count)")
-                        .font(.caption)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 1)
-                        .background(signalType.color.opacity(0.2))
-                        .foregroundStyle(signalType.color)
-                        .clipShape(Capsule())
-                }
-            }
+    private var searchField: some View {
+        HStack {
+            Image(systemName: "magnifyingglass")
+                .foregroundColor(.secondary)
+            
+            TextField("Search \(selectedSignalType.title.lowercased())...", text: Binding(
+                get: { getSearchText() },
+                set: { setSearchText($0) }
+            ))
+            .textFieldStyle(.plain)
         }
-        .listStyle(.sidebar)
-        .frame(minWidth: 120, idealWidth: 160, maxWidth: 200)
-        .navigationTitle("Signals")
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(.background.tertiary, in: RoundedRectangle(cornerRadius: 6))
+        .frame(width: 200)
     }
+    
+    private var visualModeContent: some View {
+        detailContent
+    }
+    
     
     @ViewBuilder
     private var detailContent: some View {
@@ -134,9 +175,50 @@ struct TelemetryView: View {
             return viewModel.recentLogs.count
         }
     }
+    
+    private func getSearchText() -> String {
+        switch selectedSignalType {
+        case .traces:
+            return viewModel.searchText
+        case .metrics:
+            return viewModel.selectedMetricName ?? ""
+        case .logs:
+            return viewModel.searchText
+        }
+    }
+    
+    private func setSearchText(_ text: String) {
+        switch selectedSignalType {
+        case .traces, .logs:
+            viewModel.updateSearchText(text)
+        case .metrics:
+            viewModel.updateMetricName(text.isEmpty ? nil : text)
+        }
+    }
 }
 
 // MARK: - Signal Types
+
+// MARK: - View Modes
+
+enum TelemetryViewMode: CaseIterable, Hashable {
+    case visual
+    case sql
+    
+    var title: String {
+        switch self {
+        case .visual: return "Visual"
+        case .sql: return "SQL"
+        }
+    }
+    
+    var iconName: String {
+        switch self {
+        case .visual: return "chart.xyaxis.line"
+        case .sql: return "terminal"
+        }
+    }
+}
 
 enum SignalType: CaseIterable, Hashable {
     case traces
@@ -197,10 +279,6 @@ struct EnhancedLogsView: View {
             }
         }
         .navigationTitle("Logs (\(viewModel.recentLogs.count))")
-        .searchable(text: Binding(
-            get: { viewModel.searchText },
-            set: { viewModel.updateSearchText($0) }
-        ), prompt: "Search logs...")
         .toolbar {
             ToolbarItem(placement: .automatic) {
                 Menu {
@@ -265,10 +343,6 @@ struct EnhancedMetricsView: View {
             }
         }
         .navigationTitle("Metrics (\(viewModel.groupedMetrics.count))")
-        .searchable(text: Binding(
-            get: { viewModel.selectedMetricName ?? "" },
-            set: { viewModel.updateMetricName($0.isEmpty ? nil : $0) }
-        ), prompt: "Search metrics...")
         .toolbar {
             ToolbarItem(placement: .automatic) {
                 Menu {
@@ -298,8 +372,9 @@ struct EnhancedTracesView: View {
     @State private var selectedTrace: TraceHierarchy?
     
     var body: some View {
-        NavigationSplitView {
-            Group {
+        HStack(spacing: 1) {
+            // Trace list (left side)
+            VStack(spacing: 0) {
                 if viewModel.traceHierarchies.isEmpty {
                     ContentUnavailableView {
                         Label("No Traces Found", systemImage: "point.3.connected.trianglepath.dotted")
@@ -319,9 +394,12 @@ struct EnhancedTracesView: View {
                     )
                 }
             }
-            .navigationTitle("Traces (\(viewModel.traceHierarchies.count))")
-        } detail: {
-            // Trace waterfall detail
+            .frame(minWidth: 300, idealWidth: 400, maxWidth: 500)
+            .background(.background.secondary)
+            
+            Divider()
+            
+            // Trace waterfall detail (right side)
             Group {
                 if let selectedTrace = selectedTrace {
                     TraceWaterfallView(hierarchy: selectedTrace)
@@ -333,6 +411,7 @@ struct EnhancedTracesView: View {
                     }
                 }
             }
+            .frame(maxWidth: .infinity)
         }
     }
 }
