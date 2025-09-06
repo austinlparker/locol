@@ -118,7 +118,8 @@ class ProcessManager: ProcessManagementService {
     
     func isRunning(_ collector: CollectorInstance) -> Bool {
         let running = activeProcess != nil && activeCollectorInfo?.id == collector.id
-        logger.debug("Collector \(collector.name) running status: \(running)")
+        // Remove excessive logging that causes infinite loop during UI updates
+        // logger.debug("Collector \(collector.name) running status: \(running)")
         return running
     }
     
