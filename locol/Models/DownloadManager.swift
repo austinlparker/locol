@@ -2,6 +2,7 @@ import Foundation
 import os
 import Observation
 
+@MainActor
 @Observable
 class DownloadManager: NSObject, URLSessionDownloadDelegate {
     var downloadProgress: Double = 0.0
@@ -32,8 +33,8 @@ class DownloadManager: NSObject, URLSessionDownloadDelegate {
                     return
                 }
                 if let error = error {
-                    self.handleError(error)
                     Task { @MainActor in
+                        self.handleError(error)
                         self.downloadStatus = "Download failed: \(error.localizedDescription)"
                     }
                     continuation.resume(throwing: error)
@@ -50,31 +51,27 @@ class DownloadManager: NSObject, URLSessionDownloadDelegate {
                     return
                 }
                 
-                do {
-                    Task { @MainActor in
+                Task { @MainActor in
+                    do {
                         self.downloadStatus = "Extracting \(releaseAsset.name)..."
-                    }
-                    
-                    guard let destinationPath = self.destinationBinaryPath else {
-                        throw NSError(domain: "DownloadError", code: 0, userInfo: [NSLocalizedDescriptionKey: "Destination path not set"])
-                    }
-                    
-                    let binaryPath = try self.fileManager.handleDownloadedAsset(
-                        tempLocalURL: tempLocalURL,
-                        assetName: releaseAsset.name,
-                        destinationPath: destinationPath
-                    )
-                    
-                    Task { @MainActor in
+                        
+                        guard let destinationPath = self.destinationBinaryPath else {
+                            throw NSError(domain: "DownloadError", code: 0, userInfo: [NSLocalizedDescriptionKey: "Destination path not set"])
+                        }
+                        
+                        let binaryPath = try await self.fileManager.handleDownloadedAsset(
+                            tempLocalURL: tempLocalURL,
+                            assetName: releaseAsset.name,
+                            destinationPath: destinationPath
+                        )
+                        
                         self.downloadStatus = "Download and installation complete."
-                    }
-                    continuation.resume(returning: (binaryPath, configPath))
-                } catch {
-                    self.handleError(error)
-                    Task { @MainActor in
+                        continuation.resume(returning: (binaryPath, configPath))
+                    } catch {
+                        self.handleError(error)
                         self.downloadStatus = "Error during extraction: \(error.localizedDescription)"
+                        continuation.resume(throwing: error)
                     }
-                    continuation.resume(throwing: error)
                 }
             }
             
@@ -84,13 +81,13 @@ class DownloadManager: NSObject, URLSessionDownloadDelegate {
     
     // MARK: - URLSessionDownloadDelegate
     
-    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
+    nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
         Task { @MainActor in
             self.downloadProgress = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
         }
     }
 
-    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+    nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
         Task { @MainActor in
             self.downloadStatus = "Download complete. Processing..."
         }

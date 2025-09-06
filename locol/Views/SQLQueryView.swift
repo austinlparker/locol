@@ -4,18 +4,22 @@ import UniformTypeIdentifiers
 
 struct SQLQueryView: View {
     let collectorName: String
-    @State private var queryExecutor = SQLQueryExecutor()
     @State private var currentQuery = ""
-    @State private var selectedTemplate: SQLQueryTemplate?
+    @State private var selectedTemplate: QueryTemplate?
     @State private var showingTemplates = false
-    @State private var showingHistory = false
     @State private var showingExportDialog = false
     @State private var exportFormat: ExportFormat = .csv
+    private let viewer = TelemetryViewer.shared
     
     var body: some View {
         VStack(spacing: 0) {
             // Query toolbar
             HStack {
+                Text("Collector: \(viewer.selectedCollector)")
+                    .font(.headline)
+                
+                Spacer()
+                
                 // Templates button
                 Button {
                     showingTemplates.toggle()
@@ -26,369 +30,233 @@ struct SQLQueryView: View {
                     templatesPopover
                 }
                 
-                // History button
-                Button {
-                    showingHistory.toggle()
-                } label: {
-                    Label("History", systemImage: "clock")
-                }
-                .popover(isPresented: $showingHistory) {
-                    historyPopover
-                }
-                
-                Spacer()
-                
                 // Export button
                 Button {
                     showingExportDialog.toggle()
                 } label: {
                     Label("Export", systemImage: "square.and.arrow.up")
                 }
-                .disabled(queryExecutor.lastResult == nil)
+                .disabled(viewer.lastQueryResult == nil)
                 .fileExporter(
                     isPresented: $showingExportDialog,
-                    document: SQLResultDocument(result: queryExecutor.lastResult, format: exportFormat),
+                    document: SQLResultDocument(result: viewer.lastQueryResult, format: exportFormat),
                     contentType: exportFormat == .csv ? .commaSeparatedText : .json,
-                    defaultFilename: "query_result.\(exportFormat.fileExtension)"
+                    defaultFilename: "query_result"
                 ) { result in
-                    if case .failure(let error) = result {
+                    switch result {
+                    case .success(let url):
+                        print("Exported to: \(url)")
+                    case .failure(let error):
                         print("Export failed: \(error)")
                     }
                 }
-                
-                // Execute button
-                Button {
-                    executeQuery()
-                } label: {
-                    Label("Execute", systemImage: queryExecutor.isExecuting ? "stop.circle" : "play.circle")
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(currentQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .keyboardShortcut(.return, modifiers: [.command])
             }
             .padding()
-            .background(.background.secondary)
+            .background(Color(NSColor.controlBackgroundColor))
             
-            HSplitView {
-                // Query editor (left side)
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("SQL Query")
-                            .font(.headline)
-                        
-                        Spacer()
-                        
-                        if queryExecutor.isExecuting {
-                            ProgressView()
-                                .scaleEffect(0.8)
-                        }
-                    }
+            Divider()
+            
+            // Query input area
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("SQL Query")
+                        .font(.headline)
                     
-                    // Query editor
-                    SQLQueryEditor(text: $currentQuery)
-                        .frame(minHeight: 200)
+                    Spacer()
                     
-                    // Query info
-                    if let result = queryExecutor.lastResult {
-                        HStack {
-                            Text("\(result.rowCount) rows")
-                            Text("•")
-                            Text("\(String(format: "%.2f", result.executionTime))s")
-                            Spacer()
-                        }
+                    Text("Collector: \(viewer.selectedCollector)")
                         .font(.caption)
-                        .foregroundColor(.secondary)
-                    }
-                    
-                    if let error = queryExecutor.lastError {
-                        Text(error.localizedDescription)
-                            .foregroundColor(.red)
-                            .font(.caption)
-                    }
+                        .foregroundStyle(.secondary)
                 }
-                .frame(minWidth: 250)
-                .layoutPriority(0.4)
-                .padding()
                 
-                // Results table (right side)
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack {
-                        Text("Results")
-                            .font(.headline)
-                        
-                        Spacer()
-                        
-                        if queryExecutor.lastResult != nil {
-                            Picker("Export Format", selection: $exportFormat) {
-                                ForEach(ExportFormat.allCases, id: \.self) { format in
-                                    Text(format.rawValue).tag(format)
-                                }
-                            }
-                            .pickerStyle(.segmented)
-                            .frame(width: 120)
-                        }
-                    }
+                ZStack(alignment: .topLeading) {
+                    TextEditor(text: $currentQuery)
+                        .font(.system(.body, design: .monospaced))
+                        .padding(8)
+                        .background(Color(NSColor.textBackgroundColor))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(Color(NSColor.separatorColor), lineWidth: 1)
+                        )
                     
-                    if let result = queryExecutor.lastResult {
-                        SQLResultsTable(result: result)
-                    } else {
-                        ContentUnavailableView {
-                            Label("No Results", systemImage: "tablecells")
-                        } description: {
-                            Text("Execute a query to see results here")
-                        }
+                    if currentQuery.isEmpty {
+                        Text("Enter your SQL query here...")
+                            .foregroundStyle(.tertiary)
+                            .padding(.top, 16)
+                            .padding(.leading, 12)
+                            .allowsHitTesting(false)
                     }
                 }
-                .frame(minWidth: 300)
-                .layoutPriority(0.6)
+                .frame(height: 120)
+                
+                HStack {
+                    Button("Execute Query") {
+                        Task {
+                            await viewer.executeQuery(currentQuery)
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(currentQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || viewer.isExecutingQuery)
+                    
+                    if viewer.isExecutingQuery {
+                        ProgressView()
+                            .scaleEffect(0.8)
+                        Text("Executing...")
+                            .foregroundStyle(.secondary)
+                    }
+                    
+                    Spacer()
+                    
+                    Button("Clear Results") {
+                        // Clear the current result
+                    }
+                    .disabled(viewer.lastQueryResult == nil)
+                }
+            }
+            .padding()
+            
+            Divider()
+            
+            // Results area
+            if let error = viewer.lastQueryError {
+                VStack(spacing: 8) {
+                    Label("Query Error", systemImage: "exclamationmark.triangle")
+                        .font(.headline)
+                        .foregroundStyle(.red)
+                    
+                    Text(error.localizedDescription)
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .padding()
+                        .background(Color(NSColor.controlBackgroundColor))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
                 .padding()
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+            } else if let result = viewer.lastQueryResult {
+                queryResultsView(result)
+            } else {
+                VStack(spacing: 16) {
+                    Image(systemName: "tablecells")
+                        .font(.system(size: 48))
+                        .foregroundStyle(.tertiary)
+                    
+                    Text("No query results")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                    
+                    Text("Enter and execute a SQL query to see results here")
+                        .foregroundStyle(.tertiary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .navigationTitle("SQL Query - \(collectorName)")
+        .navigationTitle("SQL Query")
+        .onAppear {
+            viewer.selectedCollector = collectorName
+            Task {
+                await viewer.refreshCollectorStats()
+            }
+        }
     }
     
     private var templatesPopover: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Query Templates")
                 .font(.headline)
-                .padding(.horizontal)
+                .padding(.bottom, 4)
             
             ScrollView {
-                LazyVStack(spacing: 8) {
-                    ForEach(SQLQueryCategory.allCases, id: \.self) { category in
-                        if category != .custom {
-                            templateSection(for: category)
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    ForEach(viewer.queryTemplates, id: \.id) { template in
+                        Button {
+                            currentQuery = template.sql
+                            selectedTemplate = template
+                            showingTemplates = false
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(template.name)
+                                        .font(.subheadline)
+                                        .fontWeight(.medium)
+                                    
+                                    Text(template.description)
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(2)
+                                    
+                                    Text("Category: \(template.category.rawValue)")
+                                        .font(.caption2)
+                                        .foregroundStyle(.tertiary)
+                                }
+                                
+                                Spacer()
+                                
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .padding(.vertical, 4)
                         }
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, 8)
+                        .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
                 }
-                .padding(.horizontal)
             }
-            .frame(width: 400, height: 300)
+            .frame(height: 200)
         }
-        .padding(.vertical)
+        .padding()
+        .frame(width: 350)
     }
     
-    private func templateSection(for category: SQLQueryCategory) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(category.rawValue)
-                .font(.subheadline)
-                .fontWeight(.medium)
-                .foregroundColor(.secondary)
-            
-            ForEach(templatesForCategory(category), id: \.name) { template in
-                Button {
-                    currentQuery = template.query
-                    showingTemplates = false
-                } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(template.name)
-                            .fontWeight(.medium)
-                        Text(template.description)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 4)
-                    .padding(.horizontal, 8)
-                    .background(.background.secondary, in: RoundedRectangle(cornerRadius: 6))
-                }
-                .buttonStyle(.plain)
-            }
-        }
-    }
-    
-    private func templatesForCategory(_ category: SQLQueryCategory) -> [SQLQueryTemplate] {
-        SQLQueryTemplate.templates.filter { $0.category == category }
-    }
-    
-    private var historyPopover: some View {
-        VStack(alignment: .leading, spacing: 12) {
+    private func queryResultsView(_ result: QueryResult) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
             HStack {
-                Text("Query History")
+                Text("Query Results")
                     .font(.headline)
                 
                 Spacer()
                 
-                Button("Clear") {
-                    queryExecutor.clearHistory()
-                }
-                .font(.caption)
+                Text("\(result.rows.count) rows")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
             .padding(.horizontal)
+            .padding(.top)
             
-            if queryExecutor.queryHistory.isEmpty {
-                Text("No queries in history")
-                    .foregroundColor(.secondary)
+            if result.columns.isEmpty {
+                Text("Query executed successfully (no results)")
+                    .foregroundStyle(.secondary)
                     .padding()
             } else {
-                ScrollView {
-                    LazyVStack(spacing: 4) {
-                        ForEach(Array(queryExecutor.queryHistory.enumerated()), id: \.offset) { index, query in
-                            Button {
-                                currentQuery = query
-                                showingHistory = false
-                            } label: {
-                                Text(query)
-                                    .font(.caption)
-                                    .lineLimit(3)
-                                    .multilineTextAlignment(.leading)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .padding(8)
-                                    .background(.background.secondary, in: RoundedRectangle(cornerRadius: 6))
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                    .padding(.horizontal)
-                }
-                .frame(width: 350, height: 200)
+                queryResultsTable(result)
             }
         }
-        .padding(.vertical)
     }
     
-    private func executeQuery() {
-        Task {
-            await queryExecutor.executeQuery(currentQuery, collectorName: collectorName)
-        }
+    private func queryResultsTable(_ result: QueryResult) -> some View {
+        NativeTableView(result: result)
+    }
+    
+    private func queryPreview(_ query: String) -> String {
+        let lines = query.components(separatedBy: .newlines)
+        let firstLine = lines.first?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return firstLine.count > 50 ? String(firstLine.prefix(50)) + "..." : firstLine
     }
 }
 
-// MARK: - SQL Query Editor
-
-struct SQLQueryEditor: NSViewRepresentable {
-    @Binding var text: String
-    
-    func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSScrollView()
-        let textView = NSTextView()
-        
-        textView.isEditable = true
-        textView.isSelectable = true
-        textView.usesFindPanel = true
-        textView.isAutomaticQuoteSubstitutionEnabled = false
-        textView.isAutomaticDashSubstitutionEnabled = false
-        textView.isAutomaticTextReplacementEnabled = false
-        textView.isAutomaticSpellingCorrectionEnabled = false
-        textView.isContinuousSpellCheckingEnabled = false
-        textView.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
-        textView.textColor = .textColor
-        textView.backgroundColor = .controlBackgroundColor
-        textView.string = text
-        
-        textView.delegate = context.coordinator
-        
-        scrollView.documentView = textView
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = true
-        scrollView.borderType = .bezelBorder
-        
-        return scrollView
-    }
-    
-    func updateNSView(_ nsView: NSScrollView, context: Context) {
-        guard let textView = nsView.documentView as? NSTextView else { return }
-        
-        if textView.string != text {
-            textView.string = text
-        }
-    }
-    
-    func makeCoordinator() -> Coordinator {
-        Coordinator(self)
-    }
-    
-    class Coordinator: NSObject, NSTextViewDelegate {
-        let parent: SQLQueryEditor
-        
-        init(_ parent: SQLQueryEditor) {
-            self.parent = parent
-        }
-        
-        func textDidChange(_ notification: Notification) {
-            guard let textView = notification.object as? NSTextView else { return }
-            parent.text = textView.string
-        }
-    }
-}
-
-// MARK: - SQL Results Table
-
-struct SQLResultsTable: NSViewRepresentable {
-    let result: SQLQueryResult
-    
-    func makeNSView(context: Context) -> NSScrollView {
-        let scrollView = NSScrollView()
-        let tableView = NSTableView()
-        
-        // Configure table view
-        tableView.headerView = NSTableHeaderView()
-        tableView.rowSizeStyle = .small
-        tableView.allowsMultipleSelection = false
-        tableView.usesAlternatingRowBackgroundColors = true
-        
-        // Add columns
-        for (index, column) in result.columns.enumerated() {
-            let tableColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(rawValue: "column_\(index)"))
-            tableColumn.title = column
-            tableColumn.minWidth = 100
-            tableView.addTableColumn(tableColumn)
-        }
-        
-        // Set data source
-        let dataSource = ResultsDataSource(result: result)
-        tableView.dataSource = dataSource
-        tableView.delegate = dataSource
-        
-        scrollView.documentView = tableView
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = true
-        scrollView.borderType = .bezelBorder
-        
-        return scrollView
-    }
-    
-    func updateNSView(_ nsView: NSScrollView, context: Context) {
-        guard let tableView = nsView.documentView as? NSTableView else { return }
-        tableView.reloadData()
-    }
-}
-
-// MARK: - Results Data Source
-
-class ResultsDataSource: NSObject, NSTableViewDataSource, NSTableViewDelegate {
-    let result: SQLQueryResult
-    
-    init(result: SQLQueryResult) {
-        self.result = result
-        super.init()
-    }
-    
-    func numberOfRows(in tableView: NSTableView) -> Int {
-        result.rows.count
-    }
-    
-    func tableView(_ tableView: NSTableView, objectValueFor tableColumn: NSTableColumn?, row: Int) -> Any? {
-        guard let columnId = tableColumn?.identifier.rawValue,
-              let columnIndex = Int(columnId.replacingOccurrences(of: "column_", with: "")),
-              row < result.rows.count,
-              columnIndex < result.rows[row].count else {
-            return nil
-        }
-        
-        return result.rows[row][columnIndex]
-    }
-}
-
-// MARK: - Export Document
+// MARK: - Export Support
 
 struct SQLResultDocument: FileDocument {
-    let result: SQLQueryResult?
+    static let readableContentTypes: [UTType] = []
+    
+    let result: QueryResult?
     let format: ExportFormat
     
-    static var readableContentTypes: [UTType] = []
-    
-    init(result: SQLQueryResult?, format: ExportFormat) {
+    init(result: QueryResult?, format: ExportFormat) {
         self.result = result
         self.format = format
     }
@@ -400,60 +268,46 @@ struct SQLResultDocument: FileDocument {
     
     func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
         guard let result = result else {
-            throw SQLQueryError.noResultToExport
+            throw CocoaError(.fileWriteNoPermission)
         }
         
         let content: String
         switch format {
         case .csv:
-            content = formatAsCSV(result)
+            content = exportAsCSV(result)
         case .json:
-            content = try formatAsJSON(result)
+            content = exportAsJSON(result)
         }
         
-        let data = content.data(using: .utf8) ?? Data()
-        return FileWrapper(regularFileWithContents: data)
+        return FileWrapper(regularFileWithContents: Data(content.utf8))
     }
     
-    private func formatAsCSV(_ result: SQLQueryResult) -> String {
-        var lines: [String] = []
+    private func exportAsCSV(_ result: QueryResult) -> String {
+        var csv = result.columns.joined(separator: ",") + "\n"
         
-        // Header
-        lines.append(result.columns.joined(separator: ","))
-        
-        // Rows
         for row in result.rows {
             let escapedRow = row.map { value in
                 if value.contains(",") || value.contains("\"") || value.contains("\n") {
                     return "\"\(value.replacingOccurrences(of: "\"", with: "\"\""))\""
-                } else {
-                    return value
                 }
+                return value
             }
-            lines.append(escapedRow.joined(separator: ","))
+            csv += escapedRow.joined(separator: ",") + "\n"
         }
         
-        return lines.joined(separator: "\n")
+        return csv
     }
     
-    private func formatAsJSON(_ result: SQLQueryResult) throws -> String {
-        var jsonRows: [[String: String]] = []
-        
-        for row in result.rows {
-            var jsonRow: [String: String] = [:]
-            for (index, column) in result.columns.enumerated() {
-                if index < row.count {
-                    jsonRow[column] = row[index]
-                }
-            }
-            jsonRows.append(jsonRow)
+    private func exportAsJSON(_ result: QueryResult) -> String {
+        let jsonArray = result.rows.map { row in
+            Dictionary(uniqueKeysWithValues: zip(result.columns, row))
         }
         
-        let jsonData = try JSONSerialization.data(withJSONObject: jsonRows, options: .prettyPrinted)
-        return String(data: jsonData, encoding: .utf8) ?? ""
+        do {
+            let jsonData = try JSONSerialization.data(withJSONObject: jsonArray, options: [.prettyPrinted])
+            return String(data: jsonData, encoding: .utf8) ?? "[]"
+        } catch {
+            return "[]"
+        }
     }
-}
-
-#Preview {
-    SQLQueryView(collectorName: "test-collector")
 }

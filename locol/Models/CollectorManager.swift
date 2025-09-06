@@ -307,10 +307,14 @@ class CollectorManager {
             handleError(error, context: "Failed to delete collector")
         }
         
-        // Clean up telemetry database for this collector
+        // Clean up telemetry data for this collector
         if #available(macOS 15.0, *) {
-            TelemetryDatabase.shared.removeDatabase(for: collector.name)
-            logger.info("Removed telemetry database for collector: \(collector.name)")
+            Task {
+                try await TelemetryStorage.shared.clearData(for: collector.name)
+                await MainActor.run {
+                    logger.info("Removed telemetry data for collector: \(collector.name)")
+                }
+            }
         }
     }
     

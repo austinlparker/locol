@@ -1,31 +1,28 @@
 import SwiftUI
 
-@available(macOS 15.0, *)
 struct AppSettingsView: View {
     @State private var settings = OTLPReceiverSettings.shared
-    @State private var otlpReceiver: OTLPGRPCReceiver? = {
-        if #available(macOS 15.0, *) {
-            return OTLPGRPCReceiver.shared
-        } else {
-            return nil
-        }
-    }()
+    @State private var serverStats: ServerStatistics?
+    private let server = OTLPServer.shared
     
     var body: some View {
         TabView {
-            OTLPReceiverSettingsView(settings: settings, receiver: otlpReceiver)
+            OTLPReceiverSettingsView(settings: settings, server: server, serverStats: $serverStats)
                 .tabItem {
                     Label("OTLP Receiver", systemImage: "antenna.radiowaves.left.and.right")
                 }
         }
         .padding()
+        .task {
+            serverStats = await server.getStatistics()
+        }
     }
 }
 
-@available(macOS 15.0, *)
 struct OTLPReceiverSettingsView: View {
     @Bindable var settings: OTLPReceiverSettings
-    var receiver: OTLPGRPCReceiver?
+    let server: OTLPServer
+    @Binding var serverStats: ServerStatistics?
     
     var body: some View {
         Form {
@@ -44,30 +41,35 @@ struct OTLPReceiverSettingsView: View {
             Section("Status") {
                 GroupBox {
                     HStack {
-                        Label((receiver?.isRunning ?? false) ? "Running" : "Stopped", 
+                        let isRunning = serverStats?.isRunning ?? false
+                        Label(isRunning ? "Running" : "Stopped", 
                               systemImage: "circle.fill")
                             .labelStyle(.iconOnly)
-                            .foregroundStyle((receiver?.isRunning ?? false) ? .green : .red)
+                            .foregroundStyle(isRunning ? .green : .red)
                         
-                        Text((receiver?.isRunning ?? false) ? "Running" : "Stopped")
+                        Text(isRunning ? "Running" : "Stopped")
                             .font(.headline)
-                            .foregroundStyle((receiver?.isRunning ?? false) ? .green : .red)
+                            .foregroundStyle(isRunning ? .green : .red)
                         
                         Spacer()
                         
-                        if #available(macOS 15.0, *), let receiver = receiver {
-                            Button(receiver.isRunning ? "Stop Receiver" : "Restart Receiver") {
-                                Task {
-                                    await receiver.restart()
+                        Button(isRunning ? "Stop Server" : "Start Server") {
+                            Task {
+                                do {
+                                    if isRunning {
+                                        await server.stop()
+                                    } else {
+                                        try await server.start()
+                                    }
+                                    serverStats = await server.getStatistics()
+                                } catch {
+                                    // Handle server start error - could show an alert
+                                    print("Server operation failed: \(error)")
                                 }
                             }
-                            .buttonStyle(.borderedProminent)
-                            .tint(receiver.isRunning ? .red : .green)
-                        } else {
-                            Text("Requires macOS 15.0+")
-                                .foregroundStyle(.secondary)
-                                .font(.caption)
                         }
+                        .buttonStyle(.borderedProminent)
+                        .tint(isRunning ? .red : .green)
                     }
                 }
             }
@@ -104,13 +106,13 @@ struct OTLPReceiverSettingsView: View {
             }
             
             Section("Statistics") {
-                LabeledContent("Traces Received", value: "\(receiver?.receivedTracesCount ?? 0)")
+                LabeledContent("Traces Received", value: "\(serverStats?.receivedTraces ?? 0)")
                     .font(.system(.body, design: .monospaced))
                 
-                LabeledContent("Metrics Received", value: "\(receiver?.receivedMetricsCount ?? 0)")
+                LabeledContent("Metrics Received", value: "\(serverStats?.receivedMetrics ?? 0)")
                     .font(.system(.body, design: .monospaced))
                 
-                LabeledContent("Logs Received", value: "\(receiver?.receivedLogsCount ?? 0)")
+                LabeledContent("Logs Received", value: "\(serverStats?.receivedLogs ?? 0)")
                     .font(.system(.body, design: .monospaced))
             }
         }
@@ -128,7 +130,7 @@ struct OTLPReceiverSettingsView: View {
                 .buttonStyle(.bordered)
                 
                 Button("Save Settings") {
-                    settings.saveToUserDefaults()
+                    // Settings are automatically saved via didSet
                 }
                 .buttonStyle(.borderedProminent)
             }
@@ -137,10 +139,6 @@ struct OTLPReceiverSettingsView: View {
 }
 
 #Preview {
-    if #available(macOS 15.0, *) {
-        AppSettingsView()
-            .frame(width: 500, height: 400)
-    } else {
-        Text("Requires macOS 15.0+")
-    }
+    AppSettingsView()
+        .frame(width: 500, height: 400)
 }

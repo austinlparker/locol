@@ -19,6 +19,7 @@ struct ConfigSnippet: Identifiable, Hashable {
     let content: String
     private(set) var parsedContent: [String: Any]?
     
+    @MainActor
     init(name: String, type: SnippetType, content: String) {
         self.name = name
         self.type = type
@@ -37,6 +38,7 @@ struct ConfigSnippet: Identifiable, Hashable {
         }
     }
     
+    @MainActor
     private static func resolvePlaceholders(in content: String) -> String {
         // Only resolve placeholders if the content contains them
         guard content.contains("{{") && content.contains("}}") else {

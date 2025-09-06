@@ -1,27 +1,32 @@
 import SwiftUI
 import Charts
-import GRDB
+import UniformTypeIdentifiers
 
 struct TelemetryView: View {
     let collectorManager: CollectorManager?
-    @State private var viewModel: TelemetryViewModel
     @State private var selectedSignalType: SignalType = .traces
     @State private var viewMode: TelemetryViewMode = .visual
+    private let viewer = TelemetryViewer.shared
     
     init(collectorManager: CollectorManager) {
         self.collectorManager = collectorManager
         
-        // Initialize view model with a running collector, or the first available collector
+        // Set initial collector if available
         let runningCollector = collectorManager.collectors.first(where: { $0.isRunning })?.name
         let firstCollector = collectorManager.collectors.first?.name
-        let initialCollector = runningCollector ?? firstCollector ?? ""
+        let initialCollector = runningCollector ?? firstCollector ?? "all"
         
-        self._viewModel = State(initialValue: TelemetryViewModel(initialCollector: initialCollector))
+        Task { @MainActor in
+            TelemetryViewer.shared.selectedCollector = initialCollector
+        }
     }
     
     init(collectorName: String) {
         self.collectorManager = nil
-        self._viewModel = State(initialValue: TelemetryViewModel(initialCollector: collectorName))
+        
+        Task { @MainActor in
+            TelemetryViewer.shared.selectedCollector = collectorName
+        }
     }
     
     var body: some View {
@@ -35,7 +40,7 @@ struct TelemetryView: View {
                 case .visual:
                     visualModeContent
                 case .sql:
-                    SQLQueryView(collectorName: viewModel.selectedCollector)
+                    SQLQueryView(collectorName: viewer.selectedCollector)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -62,13 +67,20 @@ struct TelemetryView: View {
                 // Collector selection (only show when collectorManager is available)
                 if collectorManager != nil {
                     Menu {
-                        ForEach(viewModel.availableCollectors, id: \.self) { collector in
-                            Button(collector) {
-                                viewModel.updateCollector(collector)
+                        Button("All Collectors") {
+                            viewer.selectedCollector = "all"
+                        }
+                        
+                        if !viewer.collectorStats.isEmpty {
+                            Divider()
+                            ForEach(viewer.collectorStats, id: \.collectorName) { stat in
+                                Button(stat.collectorName) {
+                                    viewer.selectedCollector = stat.collectorName
+                                }
                             }
                         }
                     } label: {
-                        Label("Collector: \(viewModel.selectedCollector)", systemImage: "server.rack")
+                        Label("Collector: \(viewer.selectedCollector)", systemImage: "server.rack")
                     }
                 }
             }
@@ -80,7 +92,7 @@ struct TelemetryView: View {
                     Picker("Signal Type", selection: $selectedSignalType) {
                         ForEach(SignalType.allCases, id: \.self) { signalType in
                             Label {
-                                Text("\(signalType.title) (\(signalCount(for: signalType) ?? 0))")
+                                Text(signalType.title)
                             } icon: {
                                 Image(systemName: signalType.iconName)
                             }
@@ -91,21 +103,13 @@ struct TelemetryView: View {
                     
                     Spacer()
                     
-                    // Time range selector
-                    Picker("Time Range", selection: Binding(
-                        get: { viewModel.selectedTimeRange },
-                        set: { viewModel.updateTimeRange($0) }
-                    )) {
-                        ForEach(TelemetryTimeRange.allCases) { range in
-                            Text(range.displayName)
-                                .tag(range)
+                    // Refresh button
+                    Button("Refresh Stats", action: {
+                        Task {
+                            await viewer.refreshCollectorStats()
                         }
-                    }
-                    .pickerStyle(.menu)
-                    .frame(width: 150)
-                    
-                    // Search field for current signal type
-                    searchField
+                    })
+                    .buttonStyle(.bordered)
                 }
             }
         }
@@ -113,22 +117,6 @@ struct TelemetryView: View {
         .background(.background.secondary)
     }
     
-    private var searchField: some View {
-        HStack {
-            Image(systemName: "magnifyingglass")
-                .foregroundColor(.secondary)
-            
-            TextField("Search \(selectedSignalType.title.lowercased())...", text: Binding(
-                get: { getSearchText() },
-                set: { setSearchText($0) }
-            ))
-            .textFieldStyle(.plain)
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(.background.tertiary, in: RoundedRectangle(cornerRadius: 6))
-        .frame(width: 200)
-    }
     
     private var visualModeContent: some View {
         detailContent
@@ -137,64 +125,16 @@ struct TelemetryView: View {
     
     @ViewBuilder
     private var detailContent: some View {
-        if viewModel.hasTelemetryData {
-            switch selectedSignalType {
-            case .traces:
-                EnhancedTracesView(viewModel: viewModel)
-            case .metrics:
-                EnhancedMetricsView(viewModel: viewModel)
-            case .logs:
-                EnhancedLogsView(viewModel: viewModel)
-            }
-        } else {
-            emptyDataView
-        }
-    }
-    
-    private var emptyDataView: some View {
-        ContentUnavailableView {
-            Label("No Telemetry Data", systemImage: "chart.line.uptrend.xyaxis")
-        } description: {
-            Text("Start sending OTLP data to see traces, metrics, and logs here")
-        } actions: {
-            Button("Refresh") {
-                // Trigger refresh of data
-                // Refresh functionality would need to be implemented
-            }
-            .buttonStyle(.borderedProminent)
-        }
-    }
-    
-    private func signalCount(for signalType: SignalType) -> Int? {
-        switch signalType {
-        case .traces:
-            return viewModel.traceHierarchies.count
-        case .metrics:
-            return viewModel.groupedMetrics.count
-        case .logs:
-            return viewModel.recentLogs.count
-        }
-    }
-    
-    private func getSearchText() -> String {
         switch selectedSignalType {
         case .traces:
-            return viewModel.searchText
+            EnhancedTracesView()
         case .metrics:
-            return viewModel.selectedMetricName ?? ""
+            EnhancedMetricsView()
         case .logs:
-            return viewModel.searchText
+            EnhancedLogsView()
         }
     }
     
-    private func setSearchText(_ text: String) {
-        switch selectedSignalType {
-        case .traces, .logs:
-            viewModel.updateSearchText(text)
-        case .metrics:
-            viewModel.updateMetricName(text.isEmpty ? nil : text)
-        }
-    }
 }
 
 // MARK: - Signal Types
@@ -253,180 +193,251 @@ enum SignalType: CaseIterable, Hashable {
 // MARK: - Enhanced Views with NSTableView
 
 struct EnhancedLogsView: View {
-    let viewModel: TelemetryViewModel
-    @State private var selectedLog: TelemetryLog?
+    @State private var queryTemplate: QueryTemplate?
+    private let viewer = TelemetryViewer.shared
     
     var body: some View {
-        Group {
-            if viewModel.recentLogs.isEmpty {
-                ContentUnavailableView {
-                    Label("No Logs Found", systemImage: "doc.text")
-                } description: {
-                    Text("Start sending log data to see entries here")
-                } actions: {
-                    Button("Refresh") {
-                        // Refresh functionality would need to be implemented
-                    }
-                    .buttonStyle(.borderedProminent)
-                }
-            } else {
-                // Use high-performance NSTableView
-                LogsTableView(
-                    logs: viewModel.recentLogs,
-                    searchText: viewModel.searchText,
-                    selectedLog: $selectedLog
-                )
-            }
-        }
-        .navigationTitle("Logs (\(viewModel.recentLogs.count))")
-        .toolbar {
-            ToolbarItem(placement: .automatic) {
-                Menu {
-                    ForEach(LogSeverity.allCases, id: \.self) { severity in
-                        Toggle(severity.displayName, isOn: Binding(
-                            get: { viewModel.selectedSeverityLevels.contains(severity) },
-                            set: { isSelected in
-                                var levels = viewModel.selectedSeverityLevels
-                                if isSelected {
-                                    levels.insert(severity)
-                                } else {
-                                    levels.remove(severity)
-                                }
-                                viewModel.updateSeverityLevels(levels)
-                            }
-                        ))
-                    }
-                } label: {
-                    Label("Filter Severity", systemImage: "line.3.horizontal.decrease.circle")
-                }
-            }
-        }
-    }
-}
-
-// MARK: - LogSeverity Extension
-
-extension LogSeverity {
-    var swiftUIColor: Color {
-        switch self {
-        case .trace, .debug: return .gray
-        case .info: return .blue
-        case .warn: return .orange
-        case .error, .fatal: return .red
-        }
-    }
-}
-
-struct EnhancedMetricsView: View {
-    let viewModel: TelemetryViewModel
-    @State private var selectedMetric: TelemetryMetricGroup?
-    
-    var body: some View {
-        Group {
-            if viewModel.groupedMetrics.isEmpty {
-                ContentUnavailableView {
-                    Label("No Metrics Found", systemImage: "chart.line.uptrend.xyaxis")
-                } description: {
-                    Text("Start sending metric data to see charts here")
-                } actions: {
-                    Button("Refresh") {
-                        // Refresh functionality would need to be implemented
-                    }
-                    .buttonStyle(.borderedProminent)
-                }
-            } else {
-                // Use compact NSTableView for better screen utilization
-                MetricsTableView(
-                    metrics: viewModel.groupedMetrics,
-                    selectedMetric: $selectedMetric
-                )
-            }
-        }
-        .navigationTitle("Metrics (\(viewModel.groupedMetrics.count))")
-        .toolbar {
-            ToolbarItem(placement: .automatic) {
-                Menu {
-                    Button("All Metrics") {
-                        viewModel.updateMetricName(nil)
-                    }
+        VStack {
+            // Template selector
+            HStack {
+                Picker("Query Template", selection: $queryTemplate) {
+                    Text("Select a template...")
+                        .tag(nil as QueryTemplate?)
                     
-                    if !viewModel.metricSummaries.isEmpty {
-                        Divider()
-                        
-                        ForEach(viewModel.metricSummaries, id: \.name) { summary in
-                            Button("\(summary.name) (\(summary.type.rawValue))") {
-                                viewModel.updateMetricName(summary.name)
-                            }
+                    ForEach(viewer.queryTemplates.filter { $0.category == .logs }, id: \.id) { template in
+                        Text(template.name)
+                            .tag(template as QueryTemplate?)
+                    }
+                }
+                .pickerStyle(.menu)
+                
+                Spacer()
+                
+                Button("Execute") {
+                    if let template = queryTemplate {
+                        Task {
+                            await viewer.executeQuery(template.sql)
                         }
                     }
-                } label: {
-                    Label("Filter Metrics", systemImage: "line.3.horizontal.decrease.circle")
+                }
+                .disabled(queryTemplate == nil || viewer.isExecutingQuery)
+            }
+            .padding()
+            
+            // Results
+            if viewer.isExecutingQuery {
+                ProgressView("Executing query...")
+            } else if let result = viewer.lastQueryResult {
+                QueryResultView(result: result)
+            } else if let error = viewer.lastQueryError {
+                ContentUnavailableView {
+                    Label("Query Failed", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(error.localizedDescription)
+                }
+            } else {
+                ContentUnavailableView {
+                    Label("No Query Executed", systemImage: "doc.text")
+                } description: {
+                    Text("Select a log template and click Execute")
                 }
             }
         }
+        .navigationTitle("Logs")
+    }
+}
+
+
+struct EnhancedMetricsView: View {
+    @State private var queryTemplate: QueryTemplate?
+    private let viewer = TelemetryViewer.shared
+    
+    var body: some View {
+        VStack {
+            // Template selector
+            HStack {
+                Picker("Query Template", selection: $queryTemplate) {
+                    Text("Select a template...")
+                        .tag(nil as QueryTemplate?)
+                    
+                    ForEach(viewer.queryTemplates.filter { $0.category == .metrics }, id: \.id) { template in
+                        Text(template.name)
+                            .tag(template as QueryTemplate?)
+                    }
+                }
+                .pickerStyle(.menu)
+                
+                Spacer()
+                
+                Button("Execute") {
+                    if let template = queryTemplate {
+                        Task {
+                            await viewer.executeQuery(template.sql)
+                        }
+                    }
+                }
+                .disabled(queryTemplate == nil || viewer.isExecutingQuery)
+            }
+            .padding()
+            
+            // Results
+            if viewer.isExecutingQuery {
+                ProgressView("Executing query...")
+            } else if let result = viewer.lastQueryResult {
+                QueryResultView(result: result)
+            } else if let error = viewer.lastQueryError {
+                ContentUnavailableView {
+                    Label("Query Failed", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(error.localizedDescription)
+                }
+            } else {
+                ContentUnavailableView {
+                    Label("No Query Executed", systemImage: "chart.line.uptrend.xyaxis")
+                } description: {
+                    Text("Select a metrics template and click Execute")
+                }
+            }
+        }
+        .navigationTitle("Metrics")
     }
 }
 
 struct EnhancedTracesView: View {
-    let viewModel: TelemetryViewModel
-    @State private var selectedTrace: TraceHierarchy?
+    @State private var queryTemplate: QueryTemplate?
+    private let viewer = TelemetryViewer.shared
     
     var body: some View {
-        HSplitView {
-            // Trace list (left side)
-            VStack(spacing: 0) {
-                if viewModel.traceHierarchies.isEmpty {
-                    ContentUnavailableView {
-                        Label("No Traces Found", systemImage: "point.3.connected.trianglepath.dotted")
-                    } description: {
-                        Text("Start sending trace data to see spans here")
-                    } actions: {
-                        Button("Refresh") {
-                            // Refresh functionality would need to be implemented
+        VStack {
+            // Template selector
+            HStack {
+                Picker("Query Template", selection: $queryTemplate) {
+                    Text("Select a template...")
+                        .tag(nil as QueryTemplate?)
+                    
+                    ForEach(viewer.queryTemplates.filter { $0.category == .traces || $0.category == .analysis }, id: \.id) { template in
+                        Text(template.name)
+                            .tag(template as QueryTemplate?)
+                    }
+                }
+                .pickerStyle(.menu)
+                
+                Spacer()
+                
+                Button("Execute") {
+                    if let template = queryTemplate {
+                        Task {
+                            await viewer.executeQuery(template.sql)
                         }
-                        .buttonStyle(.borderedProminent)
                     }
-                } else {
-                    // Use high-performance NSTableView
-                    TracesTableView(
-                        traces: viewModel.traceHierarchies,
-                        selectedTrace: $selectedTrace
-                    )
                 }
+                .disabled(queryTemplate == nil || viewer.isExecutingQuery)
             }
-            .frame(minWidth: 250)
-            .layoutPriority(0.3)
-            .background(.background.secondary)
+            .padding()
             
-            // Trace waterfall detail (right side)
-            Group {
-                if let selectedTrace = selectedTrace {
-                    TraceWaterfallView(hierarchy: selectedTrace)
-                } else {
-                    ContentUnavailableView {
-                        Label("Select a Trace", systemImage: "point.3.connected.trianglepath.dotted")
-                    } description: {
-                        Text("Choose a trace from the list to see detailed span information")
-                    }
+            // Results
+            if viewer.isExecutingQuery {
+                ProgressView("Executing query...")
+            } else if let result = viewer.lastQueryResult {
+                QueryResultView(result: result)
+            } else if let error = viewer.lastQueryError {
+                ContentUnavailableView {
+                    Label("Query Failed", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(error.localizedDescription)
+                }
+            } else {
+                ContentUnavailableView {
+                    Label("No Query Executed", systemImage: "point.3.connected.trianglepath.dotted")
+                } description: {
+                    Text("Select a trace template and click Execute")
                 }
             }
-            .frame(minWidth: 400)
-            .layoutPriority(0.7)
         }
+        .navigationTitle("Traces")
     }
 }
 
-struct TraceWaterfallView: View {
-    let hierarchy: TraceHierarchy
-    @State private var expandedSpans: Set<String> = []
+struct QueryResultView: View {
+    let result: QueryResult
     
     var body: some View {
-        // Use high-performance NSOutlineView for hierarchical spans
-        TraceWaterfallOutlineView(
-            hierarchy: hierarchy,
-            expandedSpans: $expandedSpans
-        )
-        .navigationTitle("Trace Details")
+        ScrollView([.horizontal, .vertical]) {
+            LazyVStack(alignment: .leading, spacing: 0) {
+                // Header row
+                HStack(spacing: 0) {
+                    ForEach(result.columns.indices, id: \.self) { index in
+                        Text(result.columns[index])
+                            .font(.headline)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .frame(minWidth: 100, alignment: .leading)
+                            .background(Color(NSColor.controlBackgroundColor))
+                            .overlay(
+                                Rectangle()
+                                    .frame(width: 1, height: nil, alignment: .trailing)
+                                    .foregroundStyle(.separator),
+                                alignment: .trailing
+                            )
+                    }
+                }
+                
+                // Data rows
+                ForEach(result.rows.indices, id: \.self) { rowIndex in
+                    HStack(spacing: 0) {
+                        ForEach(result.columns.indices, id: \.self) { colIndex in
+                            let value = rowIndex < result.rows.count && colIndex < result.rows[rowIndex].count 
+                                ? result.rows[rowIndex][colIndex] 
+                                : ""
+                            
+                            Text(value)
+                                .font(.system(.body, design: .monospaced))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 2)
+                                .frame(minWidth: 100, alignment: .leading)
+                                .background(rowIndex % 2 == 0 ? Color(NSColor.controlBackgroundColor) : Color(NSColor.alternatingContentBackgroundColors[1]))
+                                .overlay(
+                                    Rectangle()
+                                        .frame(width: 1, height: nil, alignment: .trailing)
+                                        .foregroundStyle(.separator),
+                                    alignment: .trailing
+                                )
+                        }
+                    }
+                }
+            }
+        }
+        .toolbar {
+            ToolbarItem(placement: .automatic) {
+                Menu {
+                    Button("Export as CSV") {
+                        exportResult(format: .csv)
+                    }
+                    Button("Export as JSON") {
+                        exportResult(format: .json)
+                    }
+                } label: {
+                    Label("Export", systemImage: "square.and.arrow.up")
+                }
+            }
+        }
+    }
+    
+    private func exportResult(format: ExportFormat) {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [format == .csv ? .commaSeparatedText : .json]
+        panel.nameFieldStringValue = "query_result.\(format.fileExtension)"
+        
+        panel.begin { response in
+            if response == .OK, let url = panel.url {
+                do {
+                    try TelemetryViewer.shared.exportResult(to: url, format: format)
+                } catch {
+                    // Handle error - could show an alert
+                    print("Export failed: \(error)")
+                }
+            }
+        }
     }
 }
 

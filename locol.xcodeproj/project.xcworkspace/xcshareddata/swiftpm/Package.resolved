@@ -1,5 +1,5 @@
 {
-  "originHash" : "6fd3e1b5b87fc5789e018fe79793edd891601ea15a0e98c2a35f2280306356ce",
+  "originHash" : "49b6b712d5ba286bbc9b2571d129d960254220ac18f40e178c9e9c2df94eaa90",
   "pins" : [
     {
       "identity" : "codeeditor",
@@ -15,8 +15,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/groue/GRDB.swift.git",
       "state" : {
-        "branch" : "master",
-        "revision" : "3801ab9ac659d9eb57133629270e900444020e8e"
+        "revision" : "8ba1bc9a96afc731a000fd4136dd13a5a46297bd",
+        "version" : "7.6.1"
       }
     },
     {
@@ -231,8 +231,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/swiftlang/swift-subprocess.git",
       "state" : {
-        "branch" : "main",
-        "revision" : "f0ba4f43931c4e0f6d15078421dee7cb1415ce5d"
+        "revision" : "44be5d56aa4b26dc2003a67c0288a6a68366a87d",
+        "version" : "0.1.0"
       }
     },
     {

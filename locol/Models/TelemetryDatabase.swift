@@ -4,11 +4,15 @@ import os
 
 /// Manages SQLite databases for storing OTLP telemetry data
 /// Each collector gets its own database for data isolation
-class TelemetryDatabase {
+actor TelemetryDatabase {
     static let shared = TelemetryDatabase()
     
     private let logger = Logger.app
-    private let fileManager = CollectorFileManager.shared
+    // Base directory for locol data
+    private let baseDirectory: URL = {
+        let homeDir = URL(fileURLWithPath: NSHomeDirectory())
+        return homeDir.appendingPathComponent(".locol")
+    }()
     
     /// Cache of open database queues by collector name
     private var databases: [String: DatabaseQueue] = [:]
@@ -24,7 +28,7 @@ class TelemetryDatabase {
             }
             
             // Create database file path
-            let databaseURL = fileManager.baseDirectory
+            let databaseURL = baseDirectory
                 .appendingPathComponent("collectors")
                 .appendingPathComponent(collectorName)
                 .appendingPathComponent("telemetry.db")
@@ -56,7 +60,7 @@ class TelemetryDatabase {
             databases.removeValue(forKey: collectorName)
             
             // Remove database file
-            let databaseURL = fileManager.baseDirectory
+            let databaseURL = baseDirectory
                 .appendingPathComponent("collectors")
                 .appendingPathComponent(collectorName)
                 .appendingPathComponent("telemetry.db")
@@ -142,7 +146,7 @@ class TelemetryDatabase {
             let logCount = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM logs") ?? 0
             
             // Get database file size
-            let databaseURL = fileManager.baseDirectory
+            let databaseURL = baseDirectory
                 .appendingPathComponent("collectors")
                 .appendingPathComponent(collectorName)
                 .appendingPathComponent("telemetry.db")
@@ -179,7 +183,7 @@ class TelemetryDatabase {
             guard let self = self else { return }
             
             // Get list of all collector database directories
-            let collectorsDir = self.fileManager.baseDirectory.appendingPathComponent("collectors")
+            let collectorsDir = self.baseDirectory.appendingPathComponent("collectors")
             guard let collectorNames = try? FileManager.default.contentsOfDirectory(atPath: collectorsDir.path) else {
                 return
             }
@@ -339,13 +343,13 @@ extension TelemetryDatabase {
     }
     
     /// Performs an async read operation on a collector's database
-    func asyncRead<T>(for collectorName: String, _ operation: @escaping @Sendable (Database) throws -> T) async throws -> T {
+    func asyncRead<T: Sendable>(for collectorName: String, _ operation: @escaping @Sendable (Database) throws -> T) async throws -> T {
         let db = try database(for: collectorName)
         return try await db.read(operation)
     }
     
     /// Performs an async write operation on a collector's database
-    func asyncWrite<T>(for collectorName: String, _ operation: @escaping @Sendable (Database) throws -> T) async throws -> T {
+    func asyncWrite<T: Sendable>(for collectorName: String, _ operation: @escaping @Sendable (Database) throws -> T) async throws -> T {
         let db = try database(for: collectorName)
         return try await db.write(operation)
     }

@@ -1,9 +1,14 @@
 import Foundation
 import os
 
-public class CollectorFileManager {
+/// Centralized file operations service for the application
+@MainActor
+public class CollectorFileManager: LoggableComponent {
     static let shared = CollectorFileManager()
-    private let logger = Logger.app
+    
+    var componentName: String? { "FileManager" }
+    var logger: Logger { .fileSystem }
+    var signposter: OSSignposter? { .fileSystem }
     
     let baseDirectory: URL
     let templatesDirectory: URL
@@ -134,10 +139,91 @@ public class CollectorFileManager {
         }
     }
     
-    var dataGeneratorPath: URL {
-        baseDirectory
-            .appendingPathComponent("bin")
-            .appendingPathComponent("otelgen")
+    
+    // MARK: - Common File Operations
+    
+    /// Check if a file exists at the given path
+    func fileExists(at path: String) -> Bool {
+        FileManager.default.fileExists(atPath: path)
+    }
+    
+    /// Check if a file exists at the given URL
+    func fileExists(at url: URL) -> Bool {
+        FileManager.default.fileExists(atPath: url.path)
+    }
+    
+    /// Create a directory at the specified URL
+    func createDirectory(at url: URL, withIntermediateDirectories: Bool = true) throws {
+        try FileManager.default.createDirectory(
+            at: url, 
+            withIntermediateDirectories: withIntermediateDirectories,
+            attributes: nil
+        )
+        logger.debug("Created directory: \(url.path)")
+    }
+    
+    /// Remove an item at the specified URL
+    func removeItem(at url: URL) throws {
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        try FileManager.default.removeItem(at: url)
+        logger.debug("Removed item: \(url.path)")
+    }
+    
+    /// Copy an item from source to destination
+    func copyItem(from source: URL, to destination: URL) throws {
+        try FileManager.default.copyItem(at: source, to: destination)
+        logger.debug("Copied item from \(source.path) to \(destination.path)")
+    }
+    
+    /// Move an item from source to destination
+    func moveItem(from source: URL, to destination: URL) throws {
+        try FileManager.default.moveItem(at: source, to: destination)
+        logger.debug("Moved item from \(source.path) to \(destination.path)")
+    }
+    
+    /// Get the contents of a directory
+    func contentsOfDirectory(at url: URL, includingPropertiesForKeys keys: [URLResourceKey]? = nil) throws -> [URL] {
+        return try FileManager.default.contentsOfDirectory(
+            at: url,
+            includingPropertiesForKeys: keys,
+            options: [.skipsHiddenFiles]
+        )
+    }
+    
+    /// Set file attributes
+    func setAttributes(_ attributes: [FileAttributeKey: Any], ofItemAt path: String) throws {
+        try FileManager.default.setAttributes(attributes, ofItemAtPath: path)
+    }
+    
+    /// Get temporary directory
+    var temporaryDirectory: URL {
+        FileManager.default.temporaryDirectory
+    }
+    
+    /// Write string to file with error handling
+    func writeString(_ content: String, to url: URL, atomically: Bool = true) throws {
+        try content.write(to: url, atomically: atomically, encoding: .utf8)
+        logger.debug("Wrote content to: \(url.path)")
+    }
+    
+    /// Read string from file with error handling
+    func readString(from url: URL) throws -> String {
+        let content = try String(contentsOf: url, encoding: .utf8)
+        logger.debug("Read content from: \(url.path)")
+        return content
+    }
+    
+    /// Write data to file with error handling
+    func writeData(_ data: Data, to url: URL) throws {
+        try data.write(to: url)
+        logger.debug("Wrote data to: \(url.path)")
+    }
+    
+    /// Read data from file with error handling
+    func readData(from url: URL) throws -> Data {
+        let data = try Data(contentsOf: url)
+        logger.debug("Read data from: \(url.path)")
+        return data
     }
 }
 

@@ -6,7 +6,6 @@ import os
 import Observation
 
 // Protocol that defines process management contract
-// This allows us to replace direct process execution with XPC in the future
 @MainActor
 protocol ProcessManagementService {
     var activeCollectorId: UUID? { get }
@@ -21,11 +20,10 @@ protocol ProcessManagementService {
 class ProcessManager: ProcessManagementService {
     
     private let fileManager: CollectorFileManager
-    private let logger = Logger.app
+    @ObservationIgnored private var activeProcess: Process?
     private var activeCollectorInfo: (id: UUID, name: String)? = nil
     
-    // Background task for processing output
-    private var outputTask: Task<Void, Never>? = nil
+    private let logger = Logger.collectors
     
     var activeCollectorId: UUID? {
         return activeCollectorInfo?.id
@@ -35,83 +33,12 @@ class ProcessManager: ProcessManagementService {
         self.fileManager = fileManager
     }
     
-    private func processCollectorLines(collectorName: String) -> (String) -> Void {
-        // State for multiline grouping - captured in closure
-        var pendingLogLines: [String] = []
-        
-        func flushPendingLogs() {
-            guard !pendingLogLines.isEmpty else { return }
-            
-            // Log output is now handled by OTLP telemetry system
-            // No need to log collector output to in-memory buffer
-            
-            // Clear pending state
-            pendingLogLines = []
-        }
-        
-        return { [self] line in
-            let trimmedLine = line.trimmingCharacters(in: .whitespaces)
-            guard !trimmedLine.isEmpty else { return }
-            
-            // Check if this line has a timestamp (indicates new entry)
-            let (parsedTimestamp, _) = self.parseTimestampAndLevel(from: trimmedLine)
-            let hasTimestamp = parsedTimestamp != nil
-            
-            if hasTimestamp {
-                // This line starts a new entry - flush any pending entry
-                flushPendingLogs()
-                
-                // Start new pending entry
-                pendingLogLines = [trimmedLine]
-                
-            } else {
-                // This is a continuation line (no timestamp)
-                if !pendingLogLines.isEmpty {
-                    // Add to current pending entry
-                    pendingLogLines.append(trimmedLine)
-                } else {
-                    // No pending entry to append to, ignore standalone log lines
-                    // Telemetry system handles actual logging
-                }
-            }
-        }
-    }
-    
-    
-    private nonisolated func parseTimestampAndLevel(from line: String) -> (Date?, LogLevel?) {
-        // Collector log format: YYYY-MM-DDTHH:MM:SS.fff±HHMM    level    ...
-        // Example: 2025-08-29T23:23:23.370-0400    info    Traces    {...}
-        
-        let components = line.components(separatedBy: "    ").filter { !$0.isEmpty }
-        
-        guard components.count >= 2 else {
-            // Not a standard collector log line, treat as continuation
-            return (nil, nil)
-        }
-        
-        // Parse timestamp
-        let timestampString = components[0].trimmingCharacters(in: .whitespaces)
-        let timestamp = parseTimestamp(timestampString)
-        
-        // Parse level  
-        let levelString = components[1].trimmingCharacters(in: .whitespaces).lowercased()
-        let level = LogLevel(rawValue: levelString) ?? .info
-        
-        return (timestamp, level)
-    }
-    
-    private nonisolated func parseTimestamp(_ timestampString: String) -> Date? {
-        // Handle collector timestamp format: 2025-08-29T23:23:23.370-0400
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        
-        return formatter.date(from: timestampString)
-    }
-    
     func startCollector(_ collector: CollectorInstance) async throws {
-        // Check if we already have an active collector
-        if outputTask != nil {
-            // Stop the currently running collector first
+        logger.debug("→ startCollector(collector: \(collector.name), version: \(collector.version))")
+        
+        // Stop any currently running collector
+        if activeProcess != nil {
+            logger.notice("Stopping currently running collector before starting \(collector.name)")
             try await stopCollector()
         }
         
@@ -121,106 +48,111 @@ class ProcessManager: ProcessManagementService {
             arguments.append(contentsOf: collector.commandLineFlags.components(separatedBy: " "))
         }
         
-        // Create line processor
-        let collectorName = collector.name
-        let lineProcessor = processCollectorLines(collectorName: collectorName)
+        logger.debug("Starting collector with arguments: \(arguments)")
         
         // Get working directory from collector's config path
         let workingDirectory = URL(fileURLWithPath: collector.configPath).deletingLastPathComponent().path
         
-        // Start collector using async let for long-running process
-        outputTask = Task {
-            do {
-                // Set environment variables to properly identify this collector
-                let resourceAttributes = "service.name=\(collector.name),service.version=\(collector.version)"
-                
-                let result = try await run(
-                    .path(FilePath(collector.binaryPath)),
-                    arguments: Arguments(arguments),
-                    environment: .inherit.updating([
-                        "OTEL_SERVICE_NAME": collector.name,
-                        "OTEL_RESOURCE_ATTRIBUTES": resourceAttributes
-                    ]),
-                    workingDirectory: FilePath(workingDirectory),
-                    error: .discarded
-                ) { execution, standardOutput in
-                    // Process stdout lines
-                    for try await line in standardOutput.lines(encoding: UTF8.self) {
-                        lineProcessor(line)
-                    }
-                }
-                
-                // Handle termination
-                await MainActor.run {
-                    // Extract exit code from termination status
-                    let exitCode: Int32
-                    switch result.terminationStatus {
-                    case .exited(let code):
-                        exitCode = code
-                    default:
-                        exitCode = -1
-                    }
-                    self.handleProcessTermination(exitCode: exitCode)
-                }
-                
-            } catch {
-                logger.error("Collector process failed: \(error)")
-                await MainActor.run {
-                    self.handleProcessTermination(exitCode: -1)
-                }
-            }
+        // Set environment variables to properly identify this collector
+        let resourceAttributes = "service.name=\(collector.name),service.version=\(collector.version)"
+        
+        // Create and configure process
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: collector.binaryPath)
+        process.arguments = arguments
+        process.currentDirectoryURL = URL(fileURLWithPath: workingDirectory)
+        
+        // Set environment
+        var env = ProcessInfo.processInfo.environment
+        env["OTEL_SERVICE_NAME"] = collector.name
+        env["OTEL_RESOURCE_ATTRIBUTES"] = resourceAttributes
+        process.environment = env
+        
+        // Discard output
+        process.standardOutput = nil
+        process.standardError = nil
+        
+        do {
+            try process.run()
+            activeProcess = process
+            activeCollectorInfo = (id: collector.id, name: collector.name)
+            
+            logger.notice("Successfully started collector: \(collector.name)")
+            logger.debug("← startCollector")
+            
+        } catch {
+            logger.error("Failed to start collector: \(error.localizedDescription)")
+            throw ProcessError.startupError(error.localizedDescription)
         }
-        
-        // Update state
-        self.activeCollectorInfo = (id: collector.id, name: collector.name)
-        
-        // Log success 
-        self.logger.info("Started collector process: \(collectorName)")
     }
     
     func stopCollector() async throws {
-        guard let task = outputTask else {
+        logger.debug("→ stopCollector")
+        
+        guard let process = activeProcess else {
+            logger.debug("No collector running to stop")
             throw ProcessError.notRunning
         }
         
-        // Cancel the task
-        task.cancel()
-        outputTask = nil
+        let collectorName = activeCollectorInfo?.name ?? "unknown"
+        logger.notice("Stopping collector: \(collectorName)")
+        
+        // Terminate the process
+        process.terminate()
+        
+        // Wait for it to exit
+        process.waitUntilExit()
         
         // Clear state
+        activeProcess = nil
         activeCollectorInfo = nil
         
-        logger.info("Stopped collector process")
+        if process.terminationStatus == 0 {
+            logger.notice("Collector \(collectorName) stopped successfully")
+        } else {
+            logger.notice("Collector \(collectorName) stopped with status: \(process.terminationStatus)")
+        }
+        
+        logger.debug("← stopCollector")
     }
     
     func isRunning(_ collector: CollectorInstance) -> Bool {
-        guard let task = outputTask, activeCollectorInfo?.id == collector.id else { 
-            return false 
-        }
-        return !task.isCancelled
-    }
-    
-    func getActiveTask() -> Task<Void, Never>? {
-        return outputTask
+        let running = activeProcess != nil && activeCollectorInfo?.id == collector.id
+        logger.debug("Collector \(collector.name) running status: \(running)")
+        return running
     }
     
     func getCollectorComponents(_ collector: CollectorInstance) async throws -> ComponentList {
-        // Use run() for simple command execution
-        let result = try await run(.path(FilePath(collector.binaryPath)), arguments: Arguments(["components"]), output: .string(limit: 1024*1024))
-        guard let output = result.standardOutput else {
-            throw ProcessError.componentsFailed
-        }
-        return try YAMLDecoder().decode(ComponentList.self, from: output)
-    }
-    
-    private func handleProcessTermination(exitCode: Int32) {
-        // Clear state
-        outputTask = nil
-        activeCollectorInfo = nil
+        logger.debug("→ getCollectorComponents(collector: \(collector.name))")
         
-        // Log termination status
-        if exitCode != 0 {
-            logger.error("Process terminated with status: \(exitCode)")
+        let startTime = DispatchTime.now()
+        
+        do {
+            let result = try await run(
+                .path(FilePath(collector.binaryPath)), 
+                arguments: Arguments(["components"]), 
+                output: .string(limit: 1024*1024)
+            )
+            
+            guard let output = result.standardOutput else {
+                logger.error("No output received from collector components command")
+                throw ProcessError.componentsFailed
+            }
+            
+            logger.debug("Retrieved \(output.count) bytes of component data")
+            
+            let componentList = try YAMLDecoder().decode(ComponentList.self, from: output)
+            
+            let endTime = DispatchTime.now()
+            let duration = Double(endTime.uptimeNanoseconds - startTime.uptimeNanoseconds) / 1_000_000_000.0
+            
+            logger.debug("← getCollectorComponents → Found \(componentList.receivers?.count ?? 0) receivers, \(componentList.processors?.count ?? 0) processors, \(componentList.exporters?.count ?? 0) exporters in \(String(format: "%.3f", duration))s")
+            
+            return componentList
+            
+        } catch {
+            logger.error("Failed to get collector components: \(error.localizedDescription)")
+            throw ProcessError.componentsFailed
         }
     }
 }

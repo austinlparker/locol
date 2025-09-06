@@ -3,6 +3,7 @@ import os
 import Yams
 import Observation
 
+@MainActor
 @Observable
 class ConfigSnippetManager {
     static let shared = ConfigSnippetManager()
@@ -219,18 +220,6 @@ service:
         
         let yamlString = try formatConfig(config)
         try yamlString.write(to: URL(fileURLWithPath: path), atomically: true, encoding: .utf8)
-    }
-    
-    private func ensureServicePipelines(in config: inout [String: Any]) {
-        if config["service"] == nil {
-            config["service"] = [String: Any]()
-        }
-        if var serviceConfig = config["service"] as? [String: Any] {
-            if serviceConfig["pipelines"] == nil {
-                serviceConfig["pipelines"] = [String: Any]()
-                config["service"] = serviceConfig
-            }
-        }
     }
     
     private func mergeConfigs(base: [String: Any], with new: [String: Any], typeKey: String) throws -> [String: Any] {

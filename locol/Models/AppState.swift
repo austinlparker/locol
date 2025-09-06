@@ -5,23 +5,10 @@ import Observation
 @Observable
 class AppState {
     private(set) var collectors: [CollectorInstance]
-    private let stateKey = "SavedCollectors"
-    private let logger = Logger.app
+    private let collectorsPersistence = UserDefaultsArrayPersistence<CollectorInstance>(key: "SavedCollectors")
     
     init() {
-        // Try to decode with new format first
-        if let data = UserDefaults.standard.data(forKey: stateKey) {
-            do {
-                self.collectors = try JSONDecoder().decode([CollectorInstance].self, from: data)
-            } catch {
-                logger.error("Failed to decode collectors with new format: \(error)")
-                // If decoding fails, clear the stored data to start fresh
-                UserDefaults.standard.removeObject(forKey: stateKey)
-                self.collectors = []
-            }
-        } else {
-            self.collectors = []
-        }
+        self.collectors = collectorsPersistence.load()
     }
     
     func addCollector(_ collector: CollectorInstance) {
@@ -46,13 +33,6 @@ class AppState {
     }
     
     private func saveState() {
-        do {
-            let encoded = try JSONEncoder().encode(collectors)
-            UserDefaults.standard.set(encoded, forKey: stateKey)
-        } catch {
-            logger.error("Failed to save app state: \(error.localizedDescription)")
-            // Consider implementing a backup mechanism or recovery procedure
-            // or notifying the user of the error
-        }
+        collectorsPersistence.save(collectors)
     }
 } 

@@ -2,13 +2,18 @@ import Foundation
 import os
 import Observation
 
+struct CachedReleasesData: Codable {
+    let releases: [Release]
+    let timestamp: Date
+}
+
+@MainActor
 @Observable
 class ReleaseManager {
     var availableReleases: [Release] = []
     private let logger = Logger.app
     
-    private let cacheKeyReleases = "CachedReleases"
-    private let cacheKeyTimestamp = "CachedReleasesTimestamp"
+    private let releasesCache = UserDefaultsArrayPersistence<CachedReleasesData>(key: "CachedReleasesData")
     
     func getCollectorReleases(repo: String, forceRefresh: Bool = false) async {
         if !forceRefresh, let cachedReleases = getCachedReleases() {
@@ -87,33 +92,20 @@ class ReleaseManager {
     }
     
     private func cacheReleases(_ releases: [Release]) {
-        let timestamp = Date()
-        do {
-            let encodedReleases = try JSONEncoder().encode(releases)
-            UserDefaults.standard.set(encodedReleases, forKey: cacheKeyReleases)
-            UserDefaults.standard.set(timestamp, forKey: cacheKeyTimestamp)
-            logger.info("Cached releases at \(timestamp)")
-        } catch {
-            logger.error("Failed to cache releases: \(error.localizedDescription)")
-        }
+        let cachedData = CachedReleasesData(releases: releases, timestamp: Date())
+        releasesCache.save([cachedData])
+        logger.info("Cached releases at \(cachedData.timestamp)")
     }
     
     private func getCachedReleases() -> [Release]? {
-        guard let timestamp = UserDefaults.standard.object(forKey: cacheKeyTimestamp) as? Date else { return nil }
-        guard Date().timeIntervalSince(timestamp) < 3600 else { return nil } // Cache valid for 1 hour
-        guard let encodedReleases = UserDefaults.standard.data(forKey: cacheKeyReleases) else { return nil }
-
-        do {
-            return try JSONDecoder().decode([Release].self, from: encodedReleases)
-        } catch {
-            logger.error("Failed to decode cached releases: \(error.localizedDescription)")
-            return nil
-        }
+        let cachedData = releasesCache.load()
+        guard let latestCache = cachedData.first else { return nil }
+        guard Date().timeIntervalSince(latestCache.timestamp) < 3600 else { return nil } // Cache valid for 1 hour
+        return latestCache.releases
     }
     
     func invalidateCache() {
-        UserDefaults.standard.removeObject(forKey: cacheKeyReleases)
-        UserDefaults.standard.removeObject(forKey: cacheKeyTimestamp)
+        releasesCache.save([])
         logger.info("Cache invalidated")
     }
 } 

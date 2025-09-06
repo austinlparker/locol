@@ -10,57 +10,39 @@ import AppKit
 import Combine
 import os
 
-
-
-// SwiftUI logging setup view modifier
-struct LogSetupViewModifier: ViewModifier {
-    @State private var didSetupLogging = false
-    
-    func body(content: Content) -> some View {
-        content.onAppear {
-            if !didSetupLogging {
-                Logger.configureLogging()
-                didSetupLogging = true
-            }
-        }
-    }
-}
-
-extension View {
-    func setupLogging() -> some View {
-        self.modifier(LogSetupViewModifier())
-    }
-}
-
 @main
 struct locolApp: App {
     @State private var collectorManager = CollectorManager()
-    @State private var dataGeneratorManager = DataGeneratorManager.shared
     @Environment(\.openWindow) private var openWindow
     
     var body: some Scene {
         WindowGroup("OpenTelemetry Collector Manager") {
             MainAppView(
-                collectorManager: collectorManager,
-                dataGeneratorManager: dataGeneratorManager
+                collectorManager: collectorManager
             )
-            .setupLogging() // Initialize logging when app launches
             .task {
-                // Start OTLP receiver when app launches
-                //try await otlpReceiver.start()
-                Logger.app.info("OTLP receiver started successfully")
+                Logger.app.notice("Application launched successfully")
                 
-                // Initialize telemetry database maintenance
-                if #available(macOS 15.0, *) {
-                    TelemetryDatabase.shared.startPeriodicMaintenance(intervalHours: 24)
-                    Logger.app.info("Started telemetry database maintenance")
+                // Initialize telemetry infrastructure
+                _ = TelemetryStorage.shared
+                _ = TelemetryViewer.shared
+                _ = OTLPServer.shared
+                
+                Task {
+                    // Auto-start the OTLP server if configured
+                    await OTLPServer.shared.autoStartIfEnabled()
+                    Logger.app.notice("OTLP server initialization completed")
+                    
+                    // Initialize telemetry viewer stats
+                    await TelemetryViewer.shared.refreshCollectorStats()
+                    Logger.app.notice("Telemetry viewer initialized")
                 }
             }
             .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
-                // Clean up database connections on app termination
-                if #available(macOS 15.0, *) {
-                    TelemetryDatabase.shared.closeAllConnections()
-                    Logger.app.info("Closed telemetry database connections")
+                // Clean up on app termination
+                Task {
+                    await OTLPServer.shared.stopOnAppTermination()
+                    Logger.app.notice("Application shutdown completed")
                 }
             }
         }
@@ -132,18 +114,8 @@ struct locolApp: App {
         
         // Settings window
         Window("Settings", id: "SettingsWindow") {
-            if #available(macOS 15.0, *) {
-                AppSettingsView()
-                    .frame(width: 500, height: 400)
-            } else {
-                VStack {
-                    Text("Settings")
-                        .font(.title2)
-                    Text("Advanced settings require macOS 15.0 or newer")
-                        .foregroundStyle(.secondary)
-                }
+            AppSettingsView()
                 .frame(width: 500, height: 400)
-            }
         }
         .windowResizability(.contentSize)
         .defaultSize(width: 500, height: 400)
