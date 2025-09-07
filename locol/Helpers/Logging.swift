@@ -119,7 +119,7 @@ enum LoggingUtils {
         work: @Sendable () throws -> T
     ) rethrows -> T {
         let startTime = DispatchTime.now()
-        let signpostID = signposter?.makeSignpostID()
+        _ = signposter?.makeSignpostID()
         // Note: OSSignposter doesn't support dynamic strings well, so we'll skip it for now
         // Signposting disabled for now
         
@@ -152,7 +152,7 @@ enum LoggingUtils {
         work: @Sendable () async throws -> T
     ) async rethrows -> T {
         let startTime = DispatchTime.now()
-        let signpostID = signposter?.makeSignpostID()
+        _ = signposter?.makeSignpostID()
         // Note: OSSignposter doesn't support dynamic strings well, so we'll skip it for now
         // Signposting disabled for now
         

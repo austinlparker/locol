@@ -1,0 +1,16 @@
+--swiftversion 6.0
+--indent 2
+--maxwidth 120
+--wraparguments before-first
+--wrapcollections before-first
+--stripunusedargs closure-only
+--self remove
+--commas inline
+--patternlet inline
+--typeattributes prev-line
+--modifierorder
+--importgrouping testable-bottom
+--trimwhitespace always
+--hexliteralcase uppercase
+--ifdef no-indent
+--exclude locol/Generated,build,opentelemetry-proto

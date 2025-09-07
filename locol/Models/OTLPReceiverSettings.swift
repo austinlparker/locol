@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import os
 
 struct OTLPReceiverSettingsData: Codable {
     var grpcPort: Int = 14317
@@ -13,8 +14,6 @@ struct OTLPReceiverSettingsData: Codable {
 @MainActor
 @Observable
 class OTLPReceiverSettings {
-    
-    static let shared = OTLPReceiverSettings()
     
     // gRPC receiver port (single port for all signals)
     var grpcPort: Int = 14317 {
@@ -40,7 +39,7 @@ class OTLPReceiverSettings {
         didSet { save() }
     }
     
-    private init() {
+    init() {
         // Load settings from UserDefaults
         if let loadedData = Self.loadFromUserDefaults() {
             self.grpcPort = loadedData.grpcPort
@@ -69,7 +68,7 @@ class OTLPReceiverSettings {
             let encoded = try JSONEncoder().encode(data)
             UserDefaults.standard.set(encoded, forKey: "OTLPReceiverSettings")
         } catch {
-            print("Failed to save OTLP receiver settings: \(error)")
+            Logger.app.error("Failed to save OTLP receiver settings: \(error.localizedDescription)")
         }
     }
     
@@ -81,7 +80,7 @@ class OTLPReceiverSettings {
         do {
             return try JSONDecoder().decode(OTLPReceiverSettingsData.self, from: data)
         } catch {
-            print("Failed to load OTLP receiver settings: \(error)")
+            Logger.app.error("Failed to load OTLP receiver settings: \(error.localizedDescription)")
             // Clear corrupted data
             UserDefaults.standard.removeObject(forKey: "OTLPReceiverSettings")
             return nil

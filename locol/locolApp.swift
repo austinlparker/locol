@@ -6,46 +6,45 @@
 //
 
 import SwiftUI
-import AppKit
-import Combine
 import os
 
 @main
 struct locolApp: App {
-    @State private var collectorManager = CollectorManager()
+    @State private var container = AppContainer()
     @Environment(\.openWindow) private var openWindow
+    
+    // Computed property for collector manager
+    private var collectorManager: CollectorManager {
+        container.collectorManager
+    }
     
     var body: some Scene {
         WindowGroup("OpenTelemetry Collector Manager") {
-            MainAppView(
-                collectorManager: collectorManager
-            )
+            MainAppView()
+                .environment(container)
             .task {
                 Logger.app.notice("Application launched successfully")
                 
-                // Initialize telemetry infrastructure
-                _ = TelemetryStorage.shared
-                _ = TelemetryViewer.shared
-                _ = OTLPServer.shared
-                
                 Task {
                     // Auto-start the OTLP server if configured
-                    await OTLPServer.shared.autoStartIfEnabled()
+                    await container.server.autoStartIfEnabled()
                     Logger.app.notice("OTLP server initialization completed")
                     
                     // Initialize telemetry viewer stats
-                    await TelemetryViewer.shared.refreshCollectorStats()
+                    await container.viewer.refreshCollectorStats()
                     Logger.app.notice("Telemetry viewer initialized")
                 }
             }
-            .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
-                // Clean up on app termination
+            .onDisappear {
+                // Clean up when app terminates - SwiftUI will handle the lifecycle
                 Task {
-                    await OTLPServer.shared.stopOnAppTermination()
+                    await container.server.stopOnAppTermination()
+                    await container.collectorManager.cleanupOnTermination()
                     Logger.app.notice("Application shutdown completed")
                 }
             }
         }
+        .windowToolbarStyle(.automatic)
         .commands {
             // Add app menu commands
             CommandGroup(replacing: .appInfo) {
@@ -99,9 +98,7 @@ struct locolApp: App {
                 HStack {
                     Spacer()
                     Button("OK") {
-                        // Use SwiftUI's environment for window dismissal
-                        guard let window = NSApplication.shared.windows.first(where: { $0.identifier?.rawValue == "AboutWindow" }) else { return }
-                        window.close()
+                        // SwiftUI will handle window dismissal automatically
                     }
                     .keyboardShortcut(.defaultAction)
                     Spacer()
@@ -115,10 +112,10 @@ struct locolApp: App {
         // Settings window
         Window("Settings", id: "SettingsWindow") {
             AppSettingsView()
+                .environment(container)
                 .frame(width: 500, height: 400)
         }
         .windowResizability(.contentSize)
         .defaultSize(width: 500, height: 400)
     }
 }
-

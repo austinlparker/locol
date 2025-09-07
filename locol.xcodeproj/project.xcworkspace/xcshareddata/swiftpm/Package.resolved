@@ -1,13 +1,13 @@
 {
-  "originHash" : "49b6b712d5ba286bbc9b2571d129d960254220ac18f40e178c9e9c2df94eaa90",
+  "originHash" : "5643efeae3a6b07fd4d8338a69a35a6daf554b4b62335166818c2a1e9547502a",
   "pins" : [
     {
-      "identity" : "codeeditor",
+      "identity" : "coretextswift",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/ZeeZide/CodeEditor.git",
+      "location" : "https://github.com/krzyzanowskim/CoreTextSwift",
       "state" : {
-        "revision" : "f5c076b94f4ceb05abff88ba91d75a8d57143f0c",
-        "version" : "1.2.6"
+        "revision" : "833177201d6421e6322296f39fce6ff6ae52618a",
+        "version" : "0.2.0"
       }
     },
     {
@@ -56,12 +56,21 @@
       }
     },
     {
-      "identity" : "highlightr",
+      "identity" : "sttextkitplus",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/helje5/Highlightr",
+      "location" : "https://github.com/krzyzanowskim/STTextKitPlus",
       "state" : {
-        "revision" : "bd0358056ff1f12ea83833a9fc1b3b5a396a9da0",
-        "version" : "3.0.2"
+        "revision" : "42513da2f28f90fb180d422c31fe670cf3e0875a",
+        "version" : "0.1.10"
+      }
+    },
+    {
+      "identity" : "sttextview?tab=readme-ov-file",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/krzyzanowskim/STTextView?tab=readme-ov-file",
+      "state" : {
+        "revision" : "e8cf0ce9da717f3bcaafa2b4a345c45e42891e00",
+        "version" : "2.2.0"
       }
     },
     {

@@ -1,8 +1,9 @@
 import Foundation
 import Yams
 import os
+import CoreTransferable
 
-enum SnippetType: String, CaseIterable {
+enum SnippetType: String, CaseIterable, Codable {
     case receivers
     case processors
     case exporters
@@ -12,49 +13,25 @@ enum SnippetType: String, CaseIterable {
     }
 }
 
-struct ConfigSnippet: Identifiable, Hashable {
-    let id = UUID()
+struct ConfigSnippet: Identifiable, Hashable, Codable {
+    let id: UUID
     let name: String
     let type: SnippetType
     let content: String
     private(set) var parsedContent: [String: Any]?
     
-    @MainActor
     init(name: String, type: SnippetType, content: String) {
+        self.id = UUID()
         self.name = name
         self.type = type
-        
-        // Resolve placeholders in content if this snippet contains them
         let resolvedContent = Self.resolvePlaceholders(in: content)
         self.content = resolvedContent
-        
-        // Try to parse the YAML content
-        do {
-            if let yaml = try Yams.load(yaml: resolvedContent) as? [String: Any] {
-                self.parsedContent = yaml
-            }
-        } catch {
-            Logger.app.error("Failed to parse YAML content for snippet \(name): \(error.localizedDescription)")
-        }
+        self.parsedContent = (try? Yams.load(yaml: resolvedContent) as? [String: Any])
     }
-    
-    @MainActor
+
     private static func resolvePlaceholders(in content: String) -> String {
-        // Only resolve placeholders if the content contains them
-        guard content.contains("{{") && content.contains("}}") else {
-            return content
-        }
-        
-        let settings = OTLPReceiverSettings.shared
-        
+        // Leave placeholders as-is; the manager can resolve when merging
         return content
-            .replacingOccurrences(of: "{{TRACES_ENDPOINT}}", with: settings.grpcEndpoint)
-            .replacingOccurrences(of: "{{METRICS_ENDPOINT}}", with: settings.grpcEndpoint)
-            .replacingOccurrences(of: "{{LOGS_ENDPOINT}}", with: settings.grpcEndpoint)
-            .replacingOccurrences(of: "{{BIND_ADDRESS}}", with: settings.bindAddress)
-            .replacingOccurrences(of: "{{TRACES_PORT}}", with: "\(settings.grpcPort)")
-            .replacingOccurrences(of: "{{METRICS_PORT}}", with: "\(settings.grpcPort)")
-            .replacingOccurrences(of: "{{LOGS_PORT}}", with: "\(settings.grpcPort)")
     }
     
     func hash(into hasher: inout Hasher) {
@@ -64,4 +41,33 @@ struct ConfigSnippet: Identifiable, Hashable {
     static func == (lhs: ConfigSnippet, rhs: ConfigSnippet) -> Bool {
         lhs.id == rhs.id
     }
-} 
+}
+
+extension ConfigSnippet: Transferable {
+    static var transferRepresentation: some TransferRepresentation {
+        CodableRepresentation(contentType: .locolSnippet)
+    }
+}
+
+// MARK: - Codable
+extension ConfigSnippet {
+    enum CodingKeys: String, CodingKey { case id, name, type, content }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        self.name = try c.decode(String.self, forKey: .name)
+        self.type = try c.decode(SnippetType.self, forKey: .type)
+        let rawContent = try c.decode(String.self, forKey: .content)
+        self.content = Self.resolvePlaceholders(in: rawContent)
+        self.parsedContent = (try? Yams.load(yaml: self.content) as? [String: Any])
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(name, forKey: .name)
+        try c.encode(type, forKey: .type)
+        try c.encode(content, forKey: .content)
+    }
+}

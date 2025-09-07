@@ -11,7 +11,6 @@
 		E10DC4EB2D3753BF003EB040 /* processors in Resources */ = {isa = PBXBuildFile; fileRef = E10DC4E72D3753BF003EB040 /* processors */; };
 		E10DC4EC2D3753BF003EB040 /* receivers in Resources */ = {isa = PBXBuildFile; fileRef = E10DC4E82D3753BF003EB040 /* receivers */; };
 		E10DC4ED2D3753BF003EB040 /* templates in Resources */ = {isa = PBXBuildFile; fileRef = E10DC4E92D3753BF003EB040 /* templates */; };
-		E15F8B752D3CAA96001547D4 /* CodeEditor in Frameworks */ = {isa = PBXBuildFile; productRef = E15F8B742D3CAA96001547D4 /* CodeEditor */; };
 		E16002C32E655D5C0036957E /* protoc-gen-swift in Frameworks */ = {isa = PBXBuildFile; productRef = E17DF7962E63EDF70027C808 /* protoc-gen-swift */; };
 		E17DF78C2E63A3200027C808 /* Subprocess in Frameworks */ = {isa = PBXBuildFile; productRef = E17DF78B2E63A3200027C808 /* Subprocess */; };
 		E17DF7912E63EDF70027C808 /* SwiftProtobuf in Frameworks */ = {isa = PBXBuildFile; productRef = E17DF7902E63EDF70027C808 /* SwiftProtobuf */; };
@@ -26,6 +25,7 @@
 		E17DFB5E2E6507B70027C808 /* GRPCNIOTransportHTTP2TransportServices in Frameworks */ = {isa = PBXBuildFile; productRef = E17DFB5D2E6507B70027C808 /* GRPCNIOTransportHTTP2TransportServices */; };
 		E17DFB612E6526710027C808 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = E17DFB602E6526710027C808 /* GRDB */; };
 		E17DFB642E6526880027C808 /* GRDBQuery in Frameworks */ = {isa = PBXBuildFile; productRef = E17DFB632E6526880027C808 /* GRDBQuery */; };
+		E1E96BD02E6D1AB400066E78 /* STTextView in Frameworks */ = {isa = PBXBuildFile; productRef = E1E96BCF2E6D1AB400066E78 /* STTextView */; };
 		E1F6522A2D346DED0091A7E8 /* Yams in Frameworks */ = {isa = PBXBuildFile; productRef = E1F652292D346DED0091A7E8 /* Yams */; };
 /* End PBXBuildFile section */
 
@@ -91,7 +91,6 @@
 			files = (
 				E16002C32E655D5C0036957E /* protoc-gen-swift in Frameworks */,
 				E17DFB402E64BF940027C808 /* GRPCNIOTransportHTTP2 in Frameworks */,
-				E15F8B752D3CAA96001547D4 /* CodeEditor in Frameworks */,
 				E1F6522A2D346DED0091A7E8 /* Yams in Frameworks */,
 				E17DFB4C2E64D35D0027C808 /* protoc-gen-grpc-swift-2 in Frameworks */,
 				E17DF7932E63EDF70027C808 /* SwiftProtobufPluginLibrary in Frameworks */,
@@ -99,6 +98,7 @@
 				E17DF78C2E63A3200027C808 /* Subprocess in Frameworks */,
 				E17DFB3B2E64BF3C0027C808 /* GRPCCore in Frameworks */,
 				E17DFB642E6526880027C808 /* GRDBQuery in Frameworks */,
+				E1E96BD02E6D1AB400066E78 /* STTextView in Frameworks */,
 				E17DFB392E64BF3C0027C808 /* GRPCCodeGen in Frameworks */,
 				E17DFB3D2E64BF3C0027C808 /* GRPCInProcessTransport in Frameworks */,
 				E17DFB432E64BFB40027C808 /* GRPCProtobuf in Frameworks */,
@@ -186,7 +186,6 @@
 			name = locol;
 			packageProductDependencies = (
 				E1F652292D346DED0091A7E8 /* Yams */,
-				E15F8B742D3CAA96001547D4 /* CodeEditor */,
 				E17DF78B2E63A3200027C808 /* Subprocess */,
 				E17DF7902E63EDF70027C808 /* SwiftProtobuf */,
 				E17DF7922E63EDF70027C808 /* SwiftProtobufPluginLibrary */,
@@ -201,6 +200,7 @@
 				E17DFB5D2E6507B70027C808 /* GRPCNIOTransportHTTP2TransportServices */,
 				E17DFB602E6526710027C808 /* GRDB */,
 				E17DFB632E6526880027C808 /* GRDBQuery */,
+				E1E96BCF2E6D1AB400066E78 /* STTextView */,
 			);
 			productName = locol;
 			productReference = E183103C2D3420390070D311 /* locol.app */;
@@ -236,7 +236,6 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				E1F652282D346DED0091A7E8 /* XCRemoteSwiftPackageReference "Yams" */,
-				E15F8B732D3CAA96001547D4 /* XCRemoteSwiftPackageReference "CodeEditor" */,
 				E17DF78A2E63A3200027C808 /* XCRemoteSwiftPackageReference "swift-subprocess" */,
 				E17DF78F2E63EDF70027C808 /* XCRemoteSwiftPackageReference "swift-protobuf" */,
 				E17DFB372E64BF3C0027C808 /* XCRemoteSwiftPackageReference "grpc-swift-2" */,
@@ -244,6 +243,7 @@
 				E17DFB412E64BFB40027C808 /* XCRemoteSwiftPackageReference "grpc-swift-protobuf" */,
 				E17DFB5F2E6526710027C808 /* XCRemoteSwiftPackageReference "GRDB.swift" */,
 				E17DFB622E6526880027C808 /* XCRemoteSwiftPackageReference "GRDBQuery" */,
+				E1E96BCE2E6D1AB400066E78 /* XCRemoteSwiftPackageReference "STTextView" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = E183103D2D3420390070D311 /* Products */;
@@ -319,7 +319,8 @@
 				PRODUCT_BUNDLE_IDENTIFIER = io.aparker.locolTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_VERSION = 5.0;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/locol.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/locol";
 			};
 			name = Debug;
@@ -336,7 +337,8 @@
 				PRODUCT_BUNDLE_IDENTIFIER = io.aparker.locolTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = NO;
-				SWIFT_VERSION = 5.0;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 6.0;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/locol.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/locol";
 			};
 			name = Release;
@@ -384,7 +386,7 @@
 				GCC_C_LANGUAGE_STANDARD = "compiler-default";
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
-				GCC_OPTIMIZATION_LEVEL = s;
+				GCC_OPTIMIZATION_LEVEL = 0;
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"DEBUG=1",
 					"$(inherited)",
@@ -403,7 +405,7 @@
 				SDKROOT = macosx;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
-				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
 			name = Debug;
 		};
@@ -449,6 +451,7 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				GCC_C_LANGUAGE_STANDARD = "compiler-default";
 				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = s;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
 				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
 				GCC_WARN_UNDECLARED_SELECTOR = YES;
@@ -483,7 +486,8 @@
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readwrite;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = locol/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = locol;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_LSUIElement = NO;
@@ -499,6 +503,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = io.aparker.locol;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_VERSION = 6.0;
 			};
 			name = Debug;
@@ -521,7 +526,8 @@
 				ENABLE_OUTGOING_NETWORK_CONNECTIONS = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readwrite;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = locol/Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = locol;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				INFOPLIST_KEY_LSUIElement = NO;
@@ -537,6 +543,7 @@
 				PRODUCT_BUNDLE_IDENTIFIER = io.aparker.locol;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_VERSION = 6.0;
 			};
 			name = Release;
@@ -574,14 +581,6 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
-		E15F8B732D3CAA96001547D4 /* XCRemoteSwiftPackageReference "CodeEditor" */ = {
-			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/ZeeZide/CodeEditor.git";
-			requirement = {
-				kind = upToNextMajorVersion;
-				minimumVersion = 1.2.6;
-			};
-		};
 		E17DF78A2E63A3200027C808 /* XCRemoteSwiftPackageReference "swift-subprocess" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/swiftlang/swift-subprocess.git";
@@ -638,6 +637,14 @@
 				minimumVersion = 0.11.0;
 			};
 		};
+		E1E96BCE2E6D1AB400066E78 /* XCRemoteSwiftPackageReference "STTextView" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/krzyzanowskim/STTextView?tab=readme-ov-file";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.2.0;
+			};
+		};
 		E1F652282D346DED0091A7E8 /* XCRemoteSwiftPackageReference "Yams" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/jpsim/Yams.git";
@@ -649,11 +656,6 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		E15F8B742D3CAA96001547D4 /* CodeEditor */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = E15F8B732D3CAA96001547D4 /* XCRemoteSwiftPackageReference "CodeEditor" */;
-			productName = CodeEditor;
-		};
 		E17DF78B2E63A3200027C808 /* Subprocess */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = E17DF78A2E63A3200027C808 /* XCRemoteSwiftPackageReference "swift-subprocess" */;
@@ -728,6 +730,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = E17DFB622E6526880027C808 /* XCRemoteSwiftPackageReference "GRDBQuery" */;
 			productName = GRDBQuery;
+		};
+		E1E96BCF2E6D1AB400066E78 /* STTextView */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E1E96BCE2E6D1AB400066E78 /* XCRemoteSwiftPackageReference "STTextView" */;
+			productName = STTextView;
 		};
 		E1F652292D346DED0091A7E8 /* Yams */ = {
 			isa = XCSwiftPackageProductDependency;

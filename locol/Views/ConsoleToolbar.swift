@@ -33,7 +33,7 @@ struct ConsoleToolbar: View {
                     Label("Refresh", systemImage: "arrow.clockwise")
                         .labelStyle(.iconOnly)
                 }
-                .conditionalGlassButtonStyle()
+                .buttonStyle(.borderless)
                 
                 // Search field
                 HStack {
@@ -56,37 +56,19 @@ struct ConsoleToolbar: View {
         .background(.ultraThinMaterial)
     }
     
-    @Namespace private var toolbarNamespace
     
     @ViewBuilder
     private var buttonGroupContent: some View {
-        if #available(macOS 26.0, *) {
-            GlassEffectContainer(spacing: 4) {
-                startStopButton
-                
-                if let onClear = onClear {
-                    Button(action: onClear) {
-                        Label("Clear", systemImage: "trash")
-                            .labelStyle(.iconOnly)
-                    }
-                    .conditionalGlassButtonStyle()
-                    .disabled(selectedCollector == nil)
-                    .conditionalGlassEffect(id: "clear", namespace: toolbarNamespace)
+        HStack(spacing: 4) {
+            startStopButton
+            
+            if let onClear = onClear {
+                Button(action: onClear) {
+                    Label("Clear", systemImage: "trash")
+                        .labelStyle(.iconOnly)
                 }
-            }
-        } else {
-            HStack(spacing: 4) {
-                startStopButton
-                
-                if let onClear = onClear {
-                    Button(action: onClear) {
-                        Label("Clear", systemImage: "trash")
-                            .labelStyle(.iconOnly)
-                    }
-                    .conditionalGlassButtonStyle()
-                    .disabled(selectedCollector == nil)
-                    .conditionalGlassEffect(id: "clear", namespace: toolbarNamespace)
-                }
+                .buttonStyle(.borderless)
+                .disabled(selectedCollector == nil)
             }
         }
     }
@@ -111,9 +93,8 @@ struct ConsoleToolbar: View {
                 }
                 .frame(minWidth: 60)
             }
-            .conditionalGlassProminentButtonStyle()
+            .buttonStyle(.borderedProminent)
             .disabled(selectedCollector == nil || isProcessing)
-            .conditionalGlassEffect(id: "startStop", namespace: toolbarNamespace)
         } else {
             Button(action: onStartStop) {
                 HStack(spacing: 6) {
@@ -131,9 +112,8 @@ struct ConsoleToolbar: View {
                 }
                 .frame(minWidth: 60)
             }
-            .conditionalGlassButtonStyle()
+            .buttonStyle(.bordered)
             .disabled(selectedCollector == nil || isProcessing)
-            .conditionalGlassEffect(id: "startStop", namespace: toolbarNamespace)
         }
     }
     
@@ -146,36 +126,6 @@ struct ConsoleToolbar: View {
     }
 }
 
-// MARK: - Availability Helpers
-
-extension View {
-    @ViewBuilder
-    func conditionalGlassEffect(id: String, namespace: Namespace.ID) -> some View {
-        if #available(macOS 26.0, *) {
-            self.glassEffectID(id, in: namespace)
-        } else {
-            self
-        }
-    }
-    
-    @ViewBuilder
-    func conditionalGlassButtonStyle() -> some View {
-        if #available(macOS 26.0, *) {
-            self.buttonStyle(GlassButtonStyle())
-        } else {
-            self.buttonStyle(.borderedProminent)
-        }
-    }
-    
-    @ViewBuilder 
-    func conditionalGlassProminentButtonStyle() -> some View {
-        if #available(macOS 26.0, *) {
-            self.buttonStyle(GlassProminentButtonStyle())
-        } else {
-            self.buttonStyle(.borderedProminent)
-        }
-    }
-}
 
 #Preview {
     VStack(spacing: 0) {

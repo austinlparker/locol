@@ -1,27 +1,27 @@
 import SwiftUI
+import os
 
 struct AppSettingsView: View {
-    @State private var settings = OTLPReceiverSettings.shared
+    @Environment(AppContainer.self) private var container
     @State private var serverStats: ServerStatistics?
-    private let server = OTLPServer.shared
     
     var body: some View {
         TabView {
-            OTLPReceiverSettingsView(settings: settings, server: server, serverStats: $serverStats)
+            OTLPReceiverSettingsView(settings: container.settings, server: container.server, serverStats: $serverStats)
                 .tabItem {
                     Label("OTLP Receiver", systemImage: "antenna.radiowaves.left.and.right")
                 }
         }
         .padding()
         .task {
-            serverStats = await server.getStatistics()
+            serverStats = await container.server.getStatistics()
         }
     }
 }
 
 struct OTLPReceiverSettingsView: View {
     @Bindable var settings: OTLPReceiverSettings
-    let server: OTLPServer
+    let server: OTLPServerProtocol
     @Binding var serverStats: ServerStatistics?
     
     var body: some View {
@@ -64,7 +64,7 @@ struct OTLPReceiverSettingsView: View {
                                     serverStats = await server.getStatistics()
                                 } catch {
                                     // Handle server start error - could show an alert
-                                    print("Server operation failed: \(error)")
+                                    Logger.grpc.error("Server operation failed: \(error.localizedDescription)")
                                 }
                             }
                         }
@@ -136,9 +136,4 @@ struct OTLPReceiverSettingsView: View {
             }
         }
     }
-}
-
-#Preview {
-    AppSettingsView()
-        .frame(width: 500, height: 400)
 }

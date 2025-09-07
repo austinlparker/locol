@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+echo "pre-commit: Formatting Swift sources (SwiftFormat)"
+if command -v swiftformat >/dev/null 2>&1; then
+  swiftformat . --config .swiftformat
+else
+  echo "pre-commit: SwiftFormat not installed; skipping format (brew install swiftformat)" >&2
+fi
+
+echo "pre-commit: Linting Swift sources (SwiftLint)"
+if command -v swiftlint >/dev/null 2>&1; then
+  swiftlint --config .swiftlint.yml
+else
+  echo "pre-commit: SwiftLint not installed; skipping lint (brew install swiftlint)" >&2
+fi
+
+echo "pre-commit: OK"
+

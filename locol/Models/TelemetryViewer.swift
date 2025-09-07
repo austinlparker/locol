@@ -7,10 +7,8 @@ import Observation
 @MainActor
 @Observable
 final class TelemetryViewer {
-    static let shared = TelemetryViewer()
-    
     private let logger = Logger.ui
-    private let storage = TelemetryStorage.shared
+    private let storage: TelemetryStorageProtocol
     
     // MARK: - Observable State
     
@@ -29,7 +27,8 @@ final class TelemetryViewer {
     /// Last query execution error
     private(set) var lastQueryError: Error?
     
-    private init() {
+    init(storage: TelemetryStorageProtocol) {
+        self.storage = storage
         // Auto-refresh stats on initialization
         Task {
             await refreshCollectorStats()

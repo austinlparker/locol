@@ -1,15 +1,16 @@
 import SwiftUI
-import AppKit
 import UniformTypeIdentifiers
+import os
 
 struct SQLQueryView: View {
     let collectorName: String
+    let viewer: TelemetryViewer
     @State private var currentQuery = ""
     @State private var selectedTemplate: QueryTemplate?
     @State private var showingTemplates = false
     @State private var showingExportDialog = false
     @State private var exportFormat: ExportFormat = .csv
-    private let viewer = TelemetryViewer.shared
+    
     
     var body: some View {
         VStack(spacing: 0) {
@@ -45,14 +46,14 @@ struct SQLQueryView: View {
                 ) { result in
                     switch result {
                     case .success(let url):
-                        print("Exported to: \(url)")
+                        Logger.ui.info("Exported query result to: \(url.path, privacy: .public)")
                     case .failure(let error):
-                        print("Export failed: \(error)")
+                        Logger.ui.error("Export failed: \(error.localizedDescription)")
                     }
                 }
             }
             .padding()
-            .background(Color(NSColor.controlBackgroundColor))
+            .background(.regularMaterial)
             
             Divider()
             
@@ -73,10 +74,10 @@ struct SQLQueryView: View {
                     TextEditor(text: $currentQuery)
                         .font(.system(.body, design: .monospaced))
                         .padding(8)
-                        .background(Color(NSColor.textBackgroundColor))
+                        .background(.background)
                         .overlay(
                             RoundedRectangle(cornerRadius: 6)
-                                .stroke(Color(NSColor.separatorColor), lineWidth: 1)
+                                .stroke(.separator, lineWidth: 1)
                         )
                     
                     if currentQuery.isEmpty {
@@ -129,7 +130,7 @@ struct SQLQueryView: View {
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
                         .padding()
-                        .background(Color(NSColor.controlBackgroundColor))
+                        .background(.regularMaterial)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                 }
                 .padding()
@@ -201,7 +202,7 @@ struct SQLQueryView: View {
                         }
                         .buttonStyle(.plain)
                         .padding(.horizontal, 8)
-                        .background(Color(NSColor.controlBackgroundColor).opacity(0.5))
+                        .background(.regularMaterial)
                         .clipShape(RoundedRectangle(cornerRadius: 6))
                     }
                 }
@@ -238,7 +239,7 @@ struct SQLQueryView: View {
     }
     
     private func queryResultsTable(_ result: QueryResult) -> some View {
-        NativeTableView(result: result)
+        QueryResultTable(result: result)
     }
     
     private func queryPreview(_ query: String) -> String {

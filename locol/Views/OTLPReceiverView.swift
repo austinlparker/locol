@@ -2,19 +2,28 @@ import SwiftUI
 
 @available(macOS 15.0, *)
 struct OTLPReceiverView: View {
-    @State private var serverStats: ServerStatistics?
     @State private var isRefreshing = false
-    private let server = OTLPServer.shared
-    private let settings = OTLPReceiverSettings.shared
-    private let viewer = TelemetryViewer.shared
+    private let server: OTLPServerProtocol
+    private let settings: OTLPReceiverSettings
+    private let viewer: TelemetryViewer
+    @State private var stats: ServerStatistics?
+    
+    init(server: OTLPServerProtocol, settings: OTLPReceiverSettings, viewer: TelemetryViewer) {
+        self.server = server
+        self.settings = settings
+        self.viewer = viewer
+    }
+    
+    // Timer for live updates
+    @State private var refreshTimer: Timer?
     
     var body: some View {
         Form {
-            // Status Section
-            statusSection
+            // Live Data Flow Section
+            liveDataSection
             
-            // Receiver Statistics Section
-            receiverStatsSection
+            // Server Info Section  
+            serverInfoSection
             
             // Database Statistics Section
             databaseStatsSection
@@ -23,130 +32,100 @@ struct OTLPReceiverView: View {
             collectorFilterSection
         }
         .formStyle(.grouped)
-        .navigationTitle("OTLP Receiver")
+        .navigationTitle("OTLP Live Tap")
         .onAppear {
-            Task {
-                await refreshStats()
-                await viewer.refreshCollectorStats()
-            }
+            startLiveUpdates()
+        }
+        .onDisappear {
+            stopLiveUpdates()
         }
     }
     
-    private var statusSection: some View {
-        Section("Server Status") {
+    private var liveDataSection: some View {
+        Section("Live Telemetry Flow") {
             GroupBox {
                 VStack(spacing: 16) {
-                    // Status indicator
+                    // Live status indicator
                     HStack {
-                        Label(serverStats?.isRunning == true ? "Running" : "Stopped", 
-                              systemImage: "circle.fill")
+                        Label("Live", systemImage: "dot.radiowaves.left.and.right")
                             .labelStyle(.iconOnly)
-                            .foregroundStyle(serverStats?.isRunning == true ? .green : .red)
+                            .foregroundStyle((stats?.isRunning ?? false) ? .green : .red)
+                            .symbolEffect(.pulse, options: .repeating, value: stats?.isRunning ?? false)
                         
-                        Text(serverStats?.isRunning == true ? "Running" : "Stopped")
+                        Text((stats?.isRunning ?? false) ? "Receiving Data" : "Offline")
                             .font(.headline)
-                            .foregroundStyle(serverStats?.isRunning == true ? .green : .red)
+                            .foregroundStyle((stats?.isRunning ?? false) ? .green : .red)
                         
                         Spacer()
                         
-                        Button(serverStats?.isRunning == true ? "Stop Server" : "Start Server") {
-                            Task {
-                                if serverStats?.isRunning == true {
-                                    await server.stop()
-                                } else {
-                                    try? await server.start()
-                                }
-                                await refreshStats()
-                            }
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                    }
-                    
-                    // Endpoint information
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("gRPC Endpoint")
+                        if let startTime = stats?.startTime {
+                            Text("Uptime: \(formatUptime(startTime))")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            Text("\(serverStats?.bindAddress ?? "unknown"):\(serverStats?.grpcPort ?? 0)")
-                                .font(.system(.body, design: .monospaced))
                         }
+                    }
+                    
+                    // Live counters with rate information
+                    HStack(spacing: 24) {
+                        LiveCounter(
+                            title: "Traces",
+                            count: stats?.receivedTraces ?? 0,
+                            icon: "point.3.connected.trianglepath.dotted",
+                            color: .blue
+                        )
                         
-                        Spacer()
+                        LiveCounter(
+                            title: "Metrics", 
+                            count: stats?.receivedMetrics ?? 0,
+                            icon: "chart.line.uptrend.xyaxis",
+                            color: .orange
+                        )
                         
-                        Button("Restart") {
-                            Task { 
-                                try? await server.restart()
-                                await refreshStats()
-                            }
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
+                        LiveCounter(
+                            title: "Logs",
+                            count: stats?.receivedLogs ?? 0, 
+                            icon: "text.alignleft",
+                            color: .green
+                        )
                     }
                 }
             }
         }
     }
     
-    private var receiverStatsSection: some View {
-        Section("Receiver Statistics") {
+    private var serverInfoSection: some View {
+        Section("Server Information") {
             GroupBox {
-                VStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 8) {
                     HStack {
-                        VStack(alignment: .leading) {
-                            Text("Traces Received")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text("\(serverStats?.receivedTraces ?? 0)")
-                                .font(.title2)
-                                .fontWeight(.semibold)
-                        }
-                        
+                        Text("gRPC Endpoint")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                         Spacer()
-                        
-                        VStack(alignment: .leading) {
-                            Text("Metrics Received")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text("\(serverStats?.receivedMetrics ?? 0)")
-                                .font(.title2)
-                                .fontWeight(.semibold)
-                        }
-                        
-                        Spacer()
-                        
-                        VStack(alignment: .leading) {
-                            Text("Logs Received")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                            Text("\(serverStats?.receivedLogs ?? 0)")
-                                .font(.title2)
-                                .fontWeight(.semibold)
-                        }
+                        Text("\(settings.bindAddress):\(settings.grpcPort)")
+                            .font(.system(.body, design: .monospaced))
                     }
                     
                     HStack {
-                        if let startTime = serverStats?.startTime {
-                            VStack(alignment: .leading) {
-                                Text("Uptime")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                Text(formatUptime(startTime))
-                                    .font(.subheadline)
-                            }
-                            
-                            Spacer()
-                        }
-                        
+                        Text("Protocol")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Text("OpenTelemetry Protocol (OTLP)")
+                            .font(.body)
+                    }
+                    
+                    HStack {
                         Button("Reset Counters") {
                             Task {
                                 await server.resetStatistics()
-                                await refreshStats()
+                                stats = await server.getStatistics()
                             }
                         }
                         .buttonStyle(.bordered)
                         .controlSize(.small)
+                        
+                        Spacer()
                     }
                 }
             }
@@ -282,15 +261,73 @@ struct OTLPReceiverView: View {
         }
     }
     
-    private func refreshStats() async {
-        serverStats = await server.getStatistics()
-    }
     
     private func formatUptime(_ startTime: Date) -> String {
         let uptime = Date().timeIntervalSince(startTime)
         let hours = Int(uptime) / 3600
         let minutes = Int(uptime) % 3600 / 60
         return "\(hours)h \(minutes)m"
+    }
+    
+    private func formatCount(_ count: Int) -> String {
+        if count < 1000 {
+            return "\(count)"
+        } else if count < 1_000_000 {
+            return String(format: "%.1fK", Double(count) / 1000)
+        } else {
+            return String(format: "%.1fM", Double(count) / 1_000_000)
+        }
+    }
+    
+    // Live update methods
+    private func startLiveUpdates() {
+        // Initial load
+        Task {
+            stats = await server.getStatistics()
+            await viewer.refreshCollectorStats()
+        }
+        
+        // Start periodic updates every 2 seconds
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { _ in
+            Task { @MainActor in
+                stats = await server.getStatistics()
+                await viewer.refreshCollectorStats()
+            }
+        }
+    }
+    
+    private func stopLiveUpdates() {
+        refreshTimer?.invalidate()
+        refreshTimer = nil
+    }
+}
+
+// Live Counter Component
+struct LiveCounter: View {
+    let title: String
+    let count: Int
+    let icon: String
+    let color: Color
+    
+    var body: some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 4) {
+                Image(systemName: icon)
+                    .foregroundStyle(color)
+                    .font(.caption)
+                
+                Text(title)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            
+            Text(formatCount(count))
+                .font(.title2)
+                .fontWeight(.semibold)
+                .monospacedDigit()
+                .contentTransition(.numericText())
+        }
+        .frame(maxWidth: .infinity)
     }
     
     private func formatCount(_ count: Int) -> String {

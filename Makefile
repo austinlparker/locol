@@ -4,7 +4,7 @@ ifneq (,$(wildcard .env))
     export
 endif
 
-.PHONY: all clean build archive dmg notarize gen-swift gen-grpc clean-proto build-plugins
+.PHONY: all clean build archive dmg notarize gen-swift gen-grpc clean-proto build-plugins lint format precommit install-hooks
 
 # Check for required environment variables
 REQUIRED_ENV_VARS := APPLE_ID TEAM_ID
@@ -160,3 +160,31 @@ ifdef APP_SPECIFIC_PASSWORD
 else
 	@echo "Skipping notarization (APP_SPECIFIC_PASSWORD not set)"
 endif 
+# Lint Swift sources using SwiftLint
+lint:
+	@if command -v swiftlint >/dev/null 2>&1; then \
+		printf "Running SwiftLint...\n"; \
+		swiftlint --config .swiftlint.yml; \
+	else \
+		echo "SwiftLint not installed. Install with: brew install swiftlint"; \
+		echo "Skipping lint."; \
+	fi
+
+# Format Swift sources using SwiftFormat
+format:
+	@if command -v swiftformat >/dev/null 2>&1; then \
+		printf "Running SwiftFormat...\n"; \
+		swiftformat . --config .swiftformat; \
+	else \
+		echo "SwiftFormat not installed. Install with: brew install swiftformat"; \
+		echo "Skipping format."; \
+	fi
+
+# Run both format and lint (useful locally and in CI)
+precommit: format lint
+
+# Install git hooks for pre-commit formatting and linting
+install-hooks:
+	@chmod +x scripts/pre-commit || true
+	@ln -sf scripts/pre-commit .git/hooks/pre-commit
+	@echo "Git pre-commit hook installed."

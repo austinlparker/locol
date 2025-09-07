@@ -5,12 +5,25 @@ import os
 
 @available(macOS 15.0, *)
 final class OTLPServices: Sendable {
+    private let storage: TelemetryStorageProtocol
+    private let server: OTLPServerProtocol
+    
+    init(storage: TelemetryStorageProtocol, server: OTLPServerProtocol) {
+        self.storage = storage
+        self.server = server
+    }
     
     // MARK: - Trace Service Implementation
     
     struct TraceServiceImpl: Opentelemetry_Proto_Collector_Trace_V1_TraceService.ServiceProtocol, Sendable {
         private let logger = Logger.grpc
-        private let storage = TelemetryStorage.shared
+        private let storage: TelemetryStorageProtocol
+        private let server: OTLPServerProtocol
+        
+        init(storage: TelemetryStorageProtocol, server: OTLPServerProtocol) {
+            self.storage = storage
+            self.server = server
+        }
         
         func export(
             request: GRPCCore.ServerRequest<Opentelemetry_Proto_Collector_Trace_V1_ExportTraceServiceRequest>,
@@ -49,6 +62,9 @@ final class OTLPServices: Sendable {
             if !storedSpans.isEmpty {
                 try await storage.storeSpans(storedSpans)
                 logger.debug("Stored \(storedSpans.count) spans from collector \(collectorName)")
+                
+                // Update server statistics
+                await server.incrementTraces(by: totalSpans)
             }
             
             // Return success response
@@ -68,7 +84,13 @@ final class OTLPServices: Sendable {
     
     struct MetricsServiceImpl: Opentelemetry_Proto_Collector_Metrics_V1_MetricsService.ServiceProtocol, Sendable {
         private let logger = Logger.grpc
-        private let storage = TelemetryStorage.shared
+        private let storage: TelemetryStorageProtocol
+        private let server: OTLPServerProtocol
+        
+        init(storage: TelemetryStorageProtocol, server: OTLPServerProtocol) {
+            self.storage = storage
+            self.server = server
+        }
         
         func export(
             request: GRPCCore.ServerRequest<Opentelemetry_Proto_Collector_Metrics_V1_ExportMetricsServiceRequest>,
@@ -107,6 +129,9 @@ final class OTLPServices: Sendable {
             if !storedMetrics.isEmpty {
                 try await storage.storeMetrics(storedMetrics)
                 logger.debug("Stored \(storedMetrics.count) metrics from collector \(collectorName)")
+                
+                // Update server statistics
+                await server.incrementMetrics(by: totalMetrics)
             }
             
             // Return success response
@@ -126,7 +151,13 @@ final class OTLPServices: Sendable {
     
     struct LogsServiceImpl: Opentelemetry_Proto_Collector_Logs_V1_LogsService.ServiceProtocol, Sendable {
         private let logger = Logger.grpc
-        private let storage = TelemetryStorage.shared
+        private let storage: TelemetryStorageProtocol
+        private let server: OTLPServerProtocol
+        
+        init(storage: TelemetryStorageProtocol, server: OTLPServerProtocol) {
+            self.storage = storage
+            self.server = server
+        }
         
         func export(
             request: GRPCCore.ServerRequest<Opentelemetry_Proto_Collector_Logs_V1_ExportLogsServiceRequest>,
@@ -165,6 +196,9 @@ final class OTLPServices: Sendable {
             if !storedLogs.isEmpty {
                 try await storage.storeLogs(storedLogs)
                 logger.debug("Stored \(storedLogs.count) logs from collector \(collectorName)")
+                
+                // Update server statistics
+                await server.incrementLogs(by: totalLogs)
             }
             
             // Return success response
@@ -184,44 +218,24 @@ final class OTLPServices: Sendable {
     
     /// Extract collector name from request metadata headers
     private static func extractCollectorName(from metadata: GRPCCore.Metadata) -> String? {
-        // Look for collector-name header
-        do {
-            let collectorName = try metadata["collector-name"].first { _ in true }
-            if let collectorName = collectorName {
-                return String(describing: collectorName)
-            }
-        } catch {
-            // Ignore metadata access errors
+        // Try explicit collector-name header
+        if let first = metadata["collector-name"].first(where: { _ in true }) {
+            return String(describing: first)
         }
-        
-        // Look for user-agent header and try to parse collector info
-        do {
-            let userAgent = try metadata["user-agent"].first { _ in true }
-            if let userAgent = userAgent {
-                let userAgentString = String(describing: userAgent)
-                // Handle common patterns like "opentelemetry-collector/0.89.0" or custom names
-                if userAgentString.contains("opentelemetry-collector") {
-                    return "otelcol"
-                } else if userAgentString.contains("collector") {
-                    return "collector"
-                }
-                return userAgentString
-            }
-        } catch {
-            // Ignore metadata access errors
+        // Fallback to user-agent header
+        if let ua = metadata["user-agent"].first(where: { _ in true }) {
+            let userAgentString = String(describing: ua)
+            if userAgentString.contains("opentelemetry-collector") { return "otelcol" }
+            if userAgentString.contains("collector") { return "collector" }
+            return userAgentString
         }
-        
         return nil
     }
     
     // MARK: - Service Instances
     
-    /// Get a configured TraceService instance as RegistrableRPCService
-    static let traceService: any RegistrableRPCService = TraceServiceImpl()
-    
-    /// Get a configured MetricsService instance as RegistrableRPCService
-    static let metricsService: any RegistrableRPCService = MetricsServiceImpl()
-    
-    /// Get a configured LogsService instance as RegistrableRPCService
-    static let logsService: any RegistrableRPCService = LogsServiceImpl()
+    /// Get configured service instances as RegistrableRPCService
+    var traceService: any RegistrableRPCService { TraceServiceImpl(storage: storage, server: server) }
+    var metricsService: any RegistrableRPCService { MetricsServiceImpl(storage: storage, server: server) }
+    var logsService: any RegistrableRPCService { LogsServiceImpl(storage: storage, server: server) }
 }

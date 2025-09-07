@@ -4,8 +4,7 @@ import os
 
 /// Actor responsible for all telemetry database operations
 /// Uses a single SQLite database with proper isolation and performance
-actor TelemetryStorage {
-    static let shared = TelemetryStorage()
+actor TelemetryStorage: TelemetryStorageProtocol {
     
     private let logger = Logger.database
     private let dbQueue: DatabaseQueue
@@ -16,7 +15,7 @@ actor TelemetryStorage {
         return homeDir.appendingPathComponent(".locol")
     }()
     
-    private init() {
+    init() {
         do {
             // Ensure directory exists
             try FileManager.default.createDirectory(

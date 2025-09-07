@@ -8,11 +8,11 @@ import os
 /// Manages the lifecycle of the OTLP gRPC server
 /// Isolated from MainActor for better performance
 @available(macOS 15.0, *)
-actor OTLPServer {
-    static let shared = OTLPServer()
-    
+actor OTLPServer: OTLPServerProtocol {
     private let logger = Logger.grpc
     private var server: GRPCServer<HTTP2ServerTransport.Posix>?
+    private let storage: TelemetryStorageProtocol
+    @MainActor private let settings: OTLPReceiverSettings
     
     // Statistics tracking
     private(set) var receivedTraces = 0
@@ -20,15 +20,15 @@ actor OTLPServer {
     private(set) var receivedLogs = 0
     private(set) var startTime: Date?
     
-    private init() {
-        // Actor initialization - we'll get settings when needed
+    init(storage: TelemetryStorageProtocol, settings: OTLPReceiverSettings) {
+        self.storage = storage
+        self.settings = settings
     }
     
     // MARK: - Settings Access
     
     @MainActor
     private func getSettings() -> (bindAddress: String, grpcPort: Int, tracesEnabled: Bool, metricsEnabled: Bool, logsEnabled: Bool) {
-        let settings = OTLPReceiverSettings.shared
         return (
             bindAddress: settings.bindAddress,
             grpcPort: settings.grpcPort,
@@ -93,9 +93,7 @@ actor OTLPServer {
     }
     
     /// Check if the server is currently running
-    var isRunning: Bool {
-        return server != nil
-    }
+    func isRunning() async -> Bool { server != nil }
     
     // MARK: - Statistics
     
@@ -103,7 +101,7 @@ actor OTLPServer {
     func getStatistics() async -> ServerStatistics {
         let settings = await getSettings()
         return ServerStatistics(
-            isRunning: isRunning,
+            isRunning: server != nil,
             startTime: startTime,
             receivedTraces: receivedTraces,
             receivedMetrics: receivedMetrics,
@@ -114,10 +112,25 @@ actor OTLPServer {
     }
     
     /// Reset statistics counters
-    func resetStatistics() {
+    func resetStatistics() async {
         receivedTraces = 0
         receivedMetrics = 0
         receivedLogs = 0
+    }
+    
+    /// Increment trace counter
+    func incrementTraces(by count: Int) async {
+        receivedTraces += count
+    }
+    
+    /// Increment metrics counter
+    func incrementMetrics(by count: Int) async {
+        receivedMetrics += count
+    }
+    
+    /// Increment logs counter
+    func incrementLogs(by count: Int) async {
+        receivedLogs += count
     }
     
     // MARK: - Configuration
@@ -125,22 +138,23 @@ actor OTLPServer {
     private func configureServices() async -> [any RegistrableRPCService] {
         var services: [any RegistrableRPCService] = []
         let settings = await getSettings()
+        let servicesFactory = OTLPServices(storage: storage, server: self)
         
         // Add trace service if enabled
         if settings.tracesEnabled {
-            services.append(OTLPServices.traceService)
+            services.append(servicesFactory.traceService)
             logger.debug("Enabled OTLP Trace service")
         }
         
         // Add metrics service if enabled  
         if settings.metricsEnabled {
-            services.append(OTLPServices.metricsService)
+            services.append(servicesFactory.metricsService)
             logger.debug("Enabled OTLP Metrics service")
         }
         
         // Add logs service if enabled
         if settings.logsEnabled {
-            services.append(OTLPServices.logsService)
+            services.append(servicesFactory.logsService)
             logger.debug("Enabled OTLP Logs service")
         }
         
@@ -196,7 +210,7 @@ extension OTLPServer {
     
     /// Stop server on app termination
     func stopOnAppTermination() async {
-        if isRunning {
+        if server != nil {
             await stop()
             logger.info("OTLP server stopped due to app termination")
         }

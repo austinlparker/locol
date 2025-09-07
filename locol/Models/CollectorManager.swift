@@ -2,7 +2,6 @@ import Foundation
 import Combine
 import Subprocess
 import os
-import AppKit
 import Observation
 import Yams
 
@@ -10,7 +9,6 @@ import Yams
 @MainActor
 @Observable
 class CollectorManager {
-    static let shared = CollectorManager()
     
     // Properties for UI updates
     private(set) var isDownloading: Bool = false
@@ -27,17 +25,29 @@ class CollectorManager {
     let releaseManager: ReleaseManager
     let downloadManager: DownloadManager
     let appState: AppState
+    let settings: OTLPReceiverSettings
+    let storage: TelemetryStorageProtocol
     let processManager: ProcessManager
     
     // Logger for error handling
     private let logger = Logger.app
     
-    init() {
-        self.fileManager = CollectorFileManager()
-        self.releaseManager = ReleaseManager()
-        self.downloadManager = DownloadManager(fileManager: fileManager)
-        self.appState = AppState()
-        self.processManager = ProcessManager(fileManager: fileManager)
+    init(
+        fileManager: CollectorFileManager = CollectorFileManager(),
+        releaseManager: ReleaseManager = ReleaseManager(),
+        downloadManager: DownloadManager? = nil,
+        appState: AppState = AppState(),
+        processManager: ProcessManager? = nil,
+        settings: OTLPReceiverSettings = OTLPReceiverSettings(),
+        storage: TelemetryStorageProtocol = TelemetryStorage()
+    ) {
+        self.fileManager = fileManager
+        self.releaseManager = releaseManager
+        self.downloadManager = downloadManager ?? DownloadManager(fileManager: fileManager)
+        self.appState = appState
+        self.processManager = processManager ?? ProcessManager(fileManager: fileManager)
+        self.settings = settings
+        self.storage = storage
         
         // Reset running state for all collectors on startup
         for collector in appState.collectors where collector.isRunning {
@@ -46,14 +56,7 @@ class CollectorManager {
             appState.updateCollector(updatedCollector)
         }
         
-        // Register for application termination notification
-        NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)
-            .sink { [weak self] _ in
-                Task {
-                    await self?.cleanupOnTermination()
-                }
-            }
-            .store(in: &cancellables)
+        // Application termination cleanup will be handled by the app's lifecycle
     }
     
     // MARK: - Public Accessors
@@ -81,8 +84,6 @@ class CollectorManager {
         }
         
         // Get OTLP receiver settings
-        let settings = OTLPReceiverSettings.shared
-        
         // Check if OTLP receiver is available (it auto-starts as a singleton)
         if #available(macOS 15.0, *) {
             // Always inject telemetry - the receiver will auto-start if needed
@@ -310,7 +311,7 @@ class CollectorManager {
         // Clean up telemetry data for this collector
         if #available(macOS 15.0, *) {
             Task {
-                try await TelemetryStorage.shared.clearData(for: collector.name)
+                try await storage.clearData(for: collector.name)
                 await MainActor.run {
                     logger.info("Removed telemetry data for collector: \(collector.name)")
                 }
@@ -457,10 +458,10 @@ class CollectorManager {
         appState.updateCollector(updatedCollector)
     }
     
-    // MARK: - Private Functions
+    // MARK: - Lifecycle Management
     
     // Centralized cleanup method that uses async/await
-    private func cleanupOnTermination() async {
+    func cleanupOnTermination() async {
         logger.info("Application terminating, stopping all collectors")
         
         // Copy collectors to avoid potential mutation during iteration

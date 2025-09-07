@@ -5,8 +5,7 @@ import Observation
 
 @MainActor
 @Observable
-class ConfigSnippetManager {
-    static let shared = ConfigSnippetManager()
+class ConfigSnippetManager: ConfigSnippetManaging {
     
     private(set) var snippets: [SnippetType: [ConfigSnippet]] = [:]
     var currentConfig: [String: Any]?
@@ -45,9 +44,25 @@ class ConfigSnippetManager {
             - debug
     """
     
+    private let settings: OTLPReceiverSettings
+    private let userSnippetsRoot: URL
+    
+    init(settings: OTLPReceiverSettings) {
+        self.settings = settings
+        // Compute and create user snippets root
+        if let appSupport = try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true) {
+            let root = appSupport.appendingPathComponent("locol/snippets", isDirectory: true)
+            try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            self.userSnippetsRoot = root
+        } else {
+            let root = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("locol/snippets", isDirectory: true)
+            try? FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+            self.userSnippetsRoot = root
+        }
+        loadSnippets()
+    }
+    
     func resolvePlaceholders(in content: String) -> String {
-        let settings = OTLPReceiverSettings.shared
-        
         return content
             .replacingOccurrences(of: "{{TRACES_ENDPOINT}}", with: settings.grpcEndpoint)
             .replacingOccurrences(of: "{{METRICS_ENDPOINT}}", with: settings.grpcEndpoint)
@@ -59,8 +74,6 @@ class ConfigSnippetManager {
     }
     
     func generateLocolReceiverConfig() -> String {
-        let settings = OTLPReceiverSettings.shared
-        
         var exporters: [String] = []
         var pipelines: [String: Any] = [:]
         
@@ -120,10 +133,20 @@ service:
 """
     }
     
-    private init() {
-        loadSnippets()
+    // default init removed in favor of injected settings
+    
+    func initializeWithAllConfigs() {
+        // This method can be called at app startup to preload any global configs
+        // For now, just ensure snippets are loaded
+        if snippets.isEmpty {
+            loadSnippets()
+        }
     }
     
+    func reloadSnippets() {
+        loadSnippets()
+    }
+
     private func loadSnippets() {
         logger.notice("Starting snippet loading...")
         
@@ -134,7 +157,7 @@ service:
             // We know the exact path structure now
             let resourceDir = resourceURL
             
-            // Load snippets from each type's directory
+            // Load bundled snippets
             for type in SnippetType.allCases {
                 var foundSnippets: [ConfigSnippet] = []
                 
@@ -160,6 +183,21 @@ service:
                 }
                 
                 foundSnippets.append(contentsOf: snippetsForPath)
+
+                // Load user snippets from Application Support as overrides/additions
+                let userTypeDir = userSnippetsRoot.appendingPathComponent(type.rawValue, isDirectory: true)
+                if FileManager.default.fileExists(atPath: userTypeDir.path) {
+                    if let userContents = try? FileManager.default.contentsOfDirectory(at: userTypeDir, includingPropertiesForKeys: nil) {
+                        let userYamlFiles = userContents.filter { $0.pathExtension == "yaml" }
+                        let userSnippets = userYamlFiles.compactMap { url -> ConfigSnippet? in
+                            guard let content = try? String(contentsOf: url, encoding: .utf8),
+                                  let yaml = try? Yams.load(yaml: content) as? [String: Any],
+                                  yaml[type.rawValue] != nil else { return nil }
+                            return ConfigSnippet(name: url.lastPathComponent, type: type, content: content)
+                        }
+                        foundSnippets.append(contentsOf: userSnippets)
+                    }
+                }
                 
                 if !foundSnippets.isEmpty {
                     snippets[type] = foundSnippets
@@ -171,6 +209,33 @@ service:
         } else {
             logger.error("Could not get resource path from bundle")
         }
+    }
+
+    // MARK: - CRUD (Application Support)
+    private func urlForSnippet(_ snippet: ConfigSnippet) -> URL {
+        let dir = userSnippetsRoot.appendingPathComponent(snippet.type.rawValue, isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent(snippet.name)
+    }
+
+    func createSnippet(_ snippet: ConfigSnippet) throws {
+        let url = urlForSnippet(snippet)
+        try snippet.content.write(to: url, atomically: true, encoding: .utf8)
+        loadSnippets()
+    }
+
+    func updateSnippet(_ snippet: ConfigSnippet) throws {
+        let url = urlForSnippet(snippet)
+        try snippet.content.write(to: url, atomically: true, encoding: .utf8)
+        loadSnippets()
+    }
+
+    func deleteSnippet(_ snippet: ConfigSnippet) throws {
+        let url = urlForSnippet(snippet)
+        if FileManager.default.fileExists(atPath: url.path) {
+            try FileManager.default.removeItem(at: url)
+        }
+        loadSnippets()
     }
     
     func loadConfig(from path: String) {

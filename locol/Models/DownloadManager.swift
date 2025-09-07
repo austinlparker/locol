@@ -59,7 +59,7 @@ class DownloadManager: NSObject, URLSessionDownloadDelegate {
                             throw NSError(domain: "DownloadError", code: 0, userInfo: [NSLocalizedDescriptionKey: "Destination path not set"])
                         }
                         
-                        let binaryPath = try await self.fileManager.handleDownloadedAsset(
+                        let binaryPath = try self.fileManager.handleDownloadedAsset(
                             tempLocalURL: tempLocalURL,
                             assetName: releaseAsset.name,
                             destinationPath: destinationPath

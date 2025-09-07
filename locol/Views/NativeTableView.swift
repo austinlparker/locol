@@ -44,6 +44,7 @@ struct NativeTableView: NSViewRepresentable {
         Coordinator()
     }
     
+    @MainActor
     class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate {
         weak var tableView: NSTableView?
         weak var scrollView: NSScrollView?

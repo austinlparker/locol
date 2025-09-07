@@ -1,0 +1,43 @@
+disabled_rules:
+  - todo
+  - trailing_whitespace
+
+opt_in_rules:
+  - attributes
+  - closure_end_indentation
+  - closure_spacing
+  - collection_alignment
+  - empty_enum_arguments
+  - empty_count
+  - explicit_init
+  - file_header
+  - first_where
+  - force_unwrapping
+  - implicitly_unwrapped_optional
+  - let_var_whitespace
+  - literal_expression_end_indentation
+  - multiline_arguments
+  - multiline_parameters
+  - operator_usage_whitespace
+  - private_action
+  - redundant_nil_coalescing
+  - sorted_imports
+  - yoda_condition
+
+included:
+  - locol
+  - locolTests
+
+line_length:
+  warning: 120
+  ignores_urls: true
+
+identifier_name:
+  min_length: 2
+
+type_name:
+  max_length: 50
+
+force_unwrapping:
+  severity: warning
+

@@ -4,7 +4,6 @@ import os
 /// Centralized file operations service for the application
 @MainActor
 public class CollectorFileManager: LoggableComponent {
-    static let shared = CollectorFileManager()
     
     var componentName: String? { "FileManager" }
     var logger: Logger { .fileSystem }
