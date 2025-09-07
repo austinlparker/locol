@@ -156,10 +156,6 @@ struct ConfigEditorView: View {
             let attrs = AttributeContainer([.foregroundColor: NSColor.labelColor, .font: font])
             attributedText = AttributedString(viewModel.configText, attributes: attrs)
         }
-        .onChange(of: viewModel.collectorId) { _, _ in
-            viewModel.loadConfig()
-            refreshAttributedText(highlightingLines: [])
-        }
         .onChange(of: viewModel.configText) { _, _ in
             refreshAttributedText(highlightingLines: pendingAddedLines)
         }

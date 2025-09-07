@@ -141,11 +141,11 @@ struct CollectorInspector: View {
                         if let components = collector.components {
                             LabeledContent("Components") {
                                 VStack(alignment: .trailing, spacing: 2) {
-                                    Text("\(components.receivers!.count) receivers")
+                                    Text("\(components.receivers?.count ?? 0) receivers")
                                         .font(.caption2)
-                                    Text("\(components.processors!.count) processors")
+                                    Text("\(components.processors?.count ?? 0) processors")
                                         .font(.caption2)
-                                    Text("\(components.exporters!.count) exporters")
+                                    Text("\(components.exporters?.count ?? 0) exporters")
                                         .font(.caption2)
                                 }
                                 .foregroundStyle(.secondary)
@@ -175,6 +175,47 @@ struct CollectorInspector: View {
                         .frame(maxHeight: 300)
                     } header: {
                         InspectorSectionHeader("SNIPPETS")
+                    }
+                }
+                
+                Divider()
+                
+                // Components Section
+                if let components = collector.components {
+                    Section {
+                        VStack(alignment: .leading, spacing: 12) {
+                            // Receivers
+                            if let receivers = components.receivers, !receivers.isEmpty {
+                                ComponentInspectorSection(title: "Receivers", items: receivers, icon: "antenna.radiowaves.left.and.right")
+                            }
+                            
+                            // Processors  
+                            if let processors = components.processors, !processors.isEmpty {
+                                ComponentInspectorSection(title: "Processors", items: processors, icon: "gear")
+                            }
+                            
+                            // Exporters
+                            if let exporters = components.exporters, !exporters.isEmpty {
+                                ComponentInspectorSection(title: "Exporters", items: exporters, icon: "square.and.arrow.up")
+                            }
+                        }
+                    } header: {
+                        InspectorSectionHeader("COMPONENTS")
+                    }
+                    
+                    Divider()
+                }
+                
+                // Command Line Flags Section
+                if !collector.commandLineFlags.isEmpty {
+                    Section {
+                        Text(collector.commandLineFlags)
+                            .font(.system(.caption, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .padding(.vertical, 4)
+                    } header: {
+                        InspectorSectionHeader("COMMAND LINE FLAGS")
                     }
                 }
             } else {
@@ -386,5 +427,51 @@ struct InspectorSectionHeader: View {
             .font(.caption)
             .foregroundStyle(.secondary)
             .textCase(.uppercase)
+    }
+}
+
+struct ComponentInspectorSection: View {
+    let title: String
+    let items: [String]
+    let icon: String
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Image(systemName: icon)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Text(title)
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(items.count)")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            
+            if items.count <= 3 {
+                // Show all items if few
+                ForEach(items, id: \.self) { item in
+                    Text("• \(item)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.leading, 4)
+                }
+            } else {
+                // Show first 2 and "... X more"
+                ForEach(items.prefix(2), id: \.self) { item in
+                    Text("• \(item)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.leading, 4)
+                }
+                Text("• ... \(items.count - 2) more")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                    .padding(.leading, 4)
+            }
+        }
     }
 }

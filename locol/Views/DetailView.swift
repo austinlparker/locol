@@ -52,24 +52,11 @@ struct CollectorDetailView: View {
     
     var body: some View {
         if let collector = collector {
-            TabView {
-                ConfigEditorView(manager: container.collectorManager, collectorId: collectorId, snippetManager: container.snippetManager)
-                    .tabItem {
-                        Label("Configuration", systemImage: "doc.text")
-                    }
-                
-                ComponentsView(collectorId: collectorId, manager: container.collectorManager)
-                    .tabItem {
-                        Label("Components", systemImage: "puzzlepiece")
-                    }
-                
-                FlagsView(collectorId: collectorId, manager: container.collectorManager)
-                    .tabItem {
-                        Label("Flags", systemImage: "flag")
-                    }
-            }
-            .navigationTitle(collector.name)
-            .navigationSubtitle(collector.version)
+            // Single view - no tabs needed, everything goes in inspector
+            ConfigEditorView(manager: container.collectorManager, collectorId: collectorId, snippetManager: container.snippetManager)
+                .id(collectorId) // Force view recreation when collector changes
+                .navigationTitle(collector.name)
+                .navigationSubtitle(collector.version)
         } else {
             ContentUnavailableView(
                 "Collector Not Found",
