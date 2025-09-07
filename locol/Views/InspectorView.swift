@@ -186,17 +186,17 @@ struct CollectorInspector: View {
                         VStack(alignment: .leading, spacing: 12) {
                             // Receivers
                             if let receivers = components.receivers, !receivers.isEmpty {
-                                ComponentInspectorSection(title: "Receivers", items: receivers, icon: "antenna.radiowaves.left.and.right")
+                                ComponentInspectorSection(title: "Receivers", items: receivers.map(\.name), icon: "antenna.radiowaves.left.and.right")
                             }
                             
                             // Processors  
                             if let processors = components.processors, !processors.isEmpty {
-                                ComponentInspectorSection(title: "Processors", items: processors, icon: "gear")
+                                ComponentInspectorSection(title: "Processors", items: processors.map(\.name), icon: "gear")
                             }
                             
                             // Exporters
                             if let exporters = components.exporters, !exporters.isEmpty {
-                                ComponentInspectorSection(title: "Exporters", items: exporters, icon: "square.and.arrow.up")
+                                ComponentInspectorSection(title: "Exporters", items: exporters.map(\.name), icon: "square.and.arrow.up")
                             }
                         }
                     } header: {
