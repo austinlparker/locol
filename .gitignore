@@ -18,6 +18,7 @@ xcuserdata/
 
 # macOS
 .DS_Store
+components.db
 .AppleDouble
 .LSOverride
 ._*
