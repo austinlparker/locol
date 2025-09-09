@@ -1,3 +1,11 @@
 [submodule "opentelemetry-proto"]
 	path = opentelemetry-proto
 	url = git@github.com:open-telemetry/opentelemetry-proto.git
+
+[submodule "opentelemetry-collector"]
+	path = .work/opentelemetry-collector
+	url = https://github.com/open-telemetry/opentelemetry-collector.git
+
+[submodule "opentelemetry-collector-contrib"]
+	path = .work/opentelemetry-collector-contrib
+	url = https://github.com/open-telemetry/opentelemetry-collector-contrib.git

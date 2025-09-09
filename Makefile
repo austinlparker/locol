@@ -4,11 +4,14 @@ ifneq (,$(wildcard .env))
     export
 endif
 
-.PHONY: all clean build archive dmg notarize gen-swift gen-grpc clean-proto build-plugins lint format precommit install-hooks
+.PHONY: all clean build archive dmg notarize gen-swift gen-grpc clean-proto build-plugins lint format precommit install-hooks components-db components-db-clean
 
-# Check for required environment variables
+# Only require Apple signing env vars for code-signing related targets
+NEED_CODESIGN_TARGETS := build_deps build archive export dmg notarize
+ifneq (,$(filter $(MAKECMDGOALS),$(NEED_CODESIGN_TARGETS)))
 REQUIRED_ENV_VARS := APPLE_ID TEAM_ID
 $(foreach var,$(REQUIRED_ENV_VARS),$(if $(value $(var)),,$(error $(var) is undefined)))
+endif
 
 # Variables
 APP_NAME = locol
@@ -188,3 +191,13 @@ install-hooks:
 	@chmod +x scripts/pre-commit || true
 	@ln -sf scripts/pre-commit .git/hooks/pre-commit
 	@echo "Git pre-commit hook installed."
+
+# Build the OpenTelemetry component database used by the app
+components-db:
+	@echo "Building component database..."
+	@bash scripts/extract_all_versions.sh
+
+# Clean generated component database and temporary JSONs
+components-db-clean:
+	@echo "Cleaning component database artifacts..."
+	@rm -f Resources/components.db scripts/configs_*.json
