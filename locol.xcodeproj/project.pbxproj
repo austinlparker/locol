@@ -26,6 +26,7 @@
 		E17DFB612E6526710027C808 /* GRDB in Frameworks */ = {isa = PBXBuildFile; productRef = E17DFB602E6526710027C808 /* GRDB */; };
 		E17DFB642E6526880027C808 /* GRDBQuery in Frameworks */ = {isa = PBXBuildFile; productRef = E17DFB632E6526880027C808 /* GRDBQuery */; };
 		E1E96BD02E6D1AB400066E78 /* STTextView in Frameworks */ = {isa = PBXBuildFile; productRef = E1E96BCF2E6D1AB400066E78 /* STTextView */; };
+		E1E96CA82E6F979100066E78 /* components.db in Resources */ = {isa = PBXBuildFile; fileRef = E1E96CA72E6F979100066E78 /* components.db */; };
 		E1F6522A2D346DED0091A7E8 /* Yams in Frameworks */ = {isa = PBXBuildFile; productRef = E1F652292D346DED0091A7E8 /* Yams */; };
 /* End PBXBuildFile section */
 
@@ -46,6 +47,7 @@
 		E10DC4E82D3753BF003EB040 /* receivers */ = {isa = PBXFileReference; lastKnownFileType = folder; name = receivers; path = locol/Resources/receivers; sourceTree = "<group>"; };
 		E10DC4E92D3753BF003EB040 /* templates */ = {isa = PBXFileReference; lastKnownFileType = folder; name = templates; path = locol/Resources/templates; sourceTree = "<group>"; };
 		E183103C2D3420390070D311 /* locol.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = locol.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		E1E96CA72E6F979100066E78 /* components.db */ = {isa = PBXFileReference; lastKnownFileType = file; path = components.db; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -121,6 +123,7 @@
 		E18310332D3420390070D311 = {
 			isa = PBXGroup;
 			children = (
+				E1E96CA72E6F979100066E78 /* components.db */,
 				E10DC4E62D3753BF003EB040 /* exporters */,
 				E10DC4E72D3753BF003EB040 /* processors */,
 				E10DC4E82D3753BF003EB040 /* receivers */,
@@ -271,6 +274,7 @@
 				E10DC4EA2D3753BF003EB040 /* exporters in Resources */,
 				E10DC4EB2D3753BF003EB040 /* processors in Resources */,
 				E10DC4EC2D3753BF003EB040 /* receivers in Resources */,
+				E1E96CA82E6F979100066E78 /* components.db in Resources */,
 				E10DC4ED2D3753BF003EB040 /* templates in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
