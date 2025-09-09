@@ -52,9 +52,7 @@ struct CollectorDetailView: View {
     
     var body: some View {
         if let collector = collector {
-            // Single view - no tabs needed, everything goes in inspector
-            ConfigEditorView(manager: container.collectorManager, collectorId: collectorId, snippetManager: container.snippetManager)
-                .id(collectorId) // Force view recreation when collector changes
+            PipelineDesignerView(collectorId: collectorId)
                 .navigationTitle(collector.name)
                 .navigationSubtitle(collector.version)
         } else {

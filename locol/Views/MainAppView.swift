@@ -57,7 +57,7 @@ struct MainAppView: View {
             DetailView(item: selectedItem)
                 .inspector(isPresented: $showInspector) {
                     InspectorView(item: selectedItem)
-                        .inspectorColumnWidth(min: 200, ideal: 300, max: 400)
+                        .inspectorColumnWidth(min: 180, ideal: 280, max: 360)
                 }
                 .toolbar {
                     ToolbarItemGroup(placement: .primaryAction) {

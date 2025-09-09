@@ -38,7 +38,6 @@ struct InspectorView: View {
 struct CollectorInspector: View {
     let collectorId: UUID
     @Environment(AppContainer.self) private var container
-    @State private var showSnippets = false
     
     var collector: CollectorInstance? {
         container.collectorManager.collectors.first { $0.id == collectorId }
@@ -46,6 +45,18 @@ struct CollectorInspector: View {
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
+            // Component editor for Pipeline Designer selection
+            if let selected = container.selectedPipelineComponent {
+                Section {
+                    ComponentInspectorView(
+                        component: binding(for: selected),
+                        onConfigChanged: { updated in updateComponent(updated) }
+                    )
+                } header: {
+                    InspectorSectionHeader("COMPONENT")
+                }
+                Divider()
+            }
             if let collector = collector {
                 // Quick Actions
                 Section {
@@ -152,30 +163,9 @@ struct CollectorInspector: View {
                             }
                         }
                         
-                        Button(action: { showSnippets.toggle() }) {
-                            Label(showSnippets ? "Hide Snippets" : "Show Snippets", systemImage: "doc.on.clipboard")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
                     }
                 } header: {
                     InspectorSectionHeader("CONFIGURATION")
-                }
-                
-                if showSnippets {
-                    Divider()
-                    
-                    // Snippets Section
-                    Section {
-                        SnippetsInspectorView(
-                            snippetManager: container.snippetManager,
-                            onAction: { _ in /* Snippet actions handled by ConfigEditorView */ }
-                        )
-                        .frame(maxHeight: 300)
-                    } header: {
-                        InspectorSectionHeader("SNIPPETS")
-                    }
                 }
                 
                 Divider()
@@ -242,6 +232,99 @@ struct CollectorInspector: View {
             try await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
             await MainActor.run {
                 container.collectorManager.startCollector(withId: collector.id)
+            }
+        }
+    }
+
+    // MARK: - Pipeline editing helpers
+    private func binding(for component: ComponentInstance) -> Binding<ComponentInstance> {
+        // Top-level collections
+        if let index = container.pipelineConfig.receivers.firstIndex(of: component) {
+            return Binding(
+                get: { container.pipelineConfig.receivers[index] },
+                set: { container.pipelineConfig.receivers[index] = $0 }
+            )
+        } else if let index = container.pipelineConfig.processors.firstIndex(of: component) {
+            return Binding(
+                get: { container.pipelineConfig.processors[index] },
+                set: { container.pipelineConfig.processors[index] = $0 }
+            )
+        } else if let index = container.pipelineConfig.exporters.firstIndex(of: component) {
+            return Binding(
+                get: { container.pipelineConfig.exporters[index] },
+                set: { container.pipelineConfig.exporters[index] = $0 }
+            )
+        } else if let index = container.pipelineConfig.extensions.firstIndex(of: component) {
+            return Binding(
+                get: { container.pipelineConfig.extensions[index] },
+                set: { container.pipelineConfig.extensions[index] = $0 }
+            )
+        } else if let index = container.pipelineConfig.connectors.firstIndex(of: component) {
+            return Binding(
+                get: { container.pipelineConfig.connectors[index] },
+                set: { container.pipelineConfig.connectors[index] = $0 }
+            )
+        }
+        // Search inside pipelines
+        for pIndex in container.pipelineConfig.pipelines.indices {
+            if let rIndex = container.pipelineConfig.pipelines[pIndex].receivers.firstIndex(of: component) {
+                return Binding(
+                    get: { container.pipelineConfig.pipelines[pIndex].receivers[rIndex] },
+                    set: { container.pipelineConfig.pipelines[pIndex].receivers[rIndex] = $0 }
+                )
+            }
+            if let prIndex = container.pipelineConfig.pipelines[pIndex].processors.firstIndex(of: component) {
+                return Binding(
+                    get: { container.pipelineConfig.pipelines[pIndex].processors[prIndex] },
+                    set: { container.pipelineConfig.pipelines[pIndex].processors[prIndex] = $0 }
+                )
+            }
+            if let eIndex = container.pipelineConfig.pipelines[pIndex].exporters.firstIndex(of: component) {
+                return Binding(
+                    get: { container.pipelineConfig.pipelines[pIndex].exporters[eIndex] },
+                    set: { container.pipelineConfig.pipelines[pIndex].exporters[eIndex] = $0 }
+                )
+            }
+        }
+        // If not found, avoid crashing — provide a transient binding to a copy
+        var copy = component
+        return Binding(
+            get: { copy },
+            set: { _ in }
+        )
+    }
+
+    private func updateComponent(_ component: ComponentInstance) {
+        if let index = container.pipelineConfig.receivers.firstIndex(where: { $0.id == component.id }) {
+            container.pipelineConfig.receivers[index] = component
+        } else if let index = container.pipelineConfig.processors.firstIndex(where: { $0.id == component.id }) {
+            container.pipelineConfig.processors[index] = component
+        } else if let index = container.pipelineConfig.exporters.firstIndex(where: { $0.id == component.id }) {
+            container.pipelineConfig.exporters[index] = component
+        } else if let index = container.pipelineConfig.extensions.firstIndex(where: { $0.id == component.id }) {
+            container.pipelineConfig.extensions[index] = component
+        } else if let index = container.pipelineConfig.connectors.firstIndex(where: { $0.id == component.id }) {
+            container.pipelineConfig.connectors[index] = component
+        }
+
+        // Update in pipelines too
+        for (pipelineIndex, pipeline) in container.pipelineConfig.pipelines.enumerated() {
+            var updatedPipeline = pipeline
+            var needsUpdate = false
+            if let receiverIndex = updatedPipeline.receivers.firstIndex(where: { $0.id == component.id }) {
+                updatedPipeline.receivers[receiverIndex] = component
+                needsUpdate = true
+            }
+            if let processorIndex = updatedPipeline.processors.firstIndex(where: { $0.id == component.id }) {
+                updatedPipeline.processors[processorIndex] = component
+                needsUpdate = true
+            }
+            if let exporterIndex = updatedPipeline.exporters.firstIndex(where: { $0.id == component.id }) {
+                updatedPipeline.exporters[exporterIndex] = component
+                needsUpdate = true
+            }
+            if needsUpdate {
+                container.pipelineConfig.pipelines[pipelineIndex] = updatedPipeline
             }
         }
     }
