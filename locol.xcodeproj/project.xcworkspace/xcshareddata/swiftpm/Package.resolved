@@ -1,5 +1,5 @@
 {
-  "originHash" : "5643efeae3a6b07fd4d8338a69a35a6daf554b4b62335166818c2a1e9547502a",
+  "originHash" : "9b70043bcca675c66bae62a592dd88a0e235476ee162f0206a1d00e17acd5b45",
   "pins" : [
     {
       "identity" : "coretextswift",
@@ -8,6 +8,15 @@
       "state" : {
         "revision" : "833177201d6421e6322296f39fce6ff6ae52618a",
         "version" : "0.2.0"
+      }
+    },
+    {
+      "identity" : "datacompression",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/mw99/DataCompression",
+      "state" : {
+        "revision" : "16f858982a077451ce3bdbd9144d3073ec85b6e4",
+        "version" : "3.9.0"
       }
     },
     {
@@ -26,6 +35,15 @@
       "state" : {
         "revision" : "540dc48e86af2972b4f1815616aa1ed8ac97845a",
         "version" : "0.11.0"
+      }
+    },
+    {
+      "identity" : "grpc-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/grpc/grpc-swift.git",
+      "state" : {
+        "revision" : "a56a157218877ef3e9625f7e1f7b2cb7e46ead1b",
+        "version" : "1.26.1"
       }
     },
     {
@@ -53,6 +71,33 @@
       "state" : {
         "revision" : "c008d356d9e9c2255602711888bf25b542a30919",
         "version" : "2.1.1"
+      }
+    },
+    {
+      "identity" : "honeycomb-opentelemetry-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/honeycombio/honeycomb-opentelemetry-swift",
+      "state" : {
+        "revision" : "6c43dad8d3534fdd3e38288ff9d15796557b90ff",
+        "version" : "2.1.0"
+      }
+    },
+    {
+      "identity" : "opentelemetry-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/open-telemetry/opentelemetry-swift.git",
+      "state" : {
+        "revision" : "6cd16704ef24a8a41e301be939ab2af526963a75",
+        "version" : "2.0.2"
+      }
+    },
+    {
+      "identity" : "opentracing-objc",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/undefinedlabs/opentracing-objc",
+      "state" : {
+        "revision" : "18c1a35ca966236cee0c5a714a51a73ff33384c1",
+        "version" : "0.5.2"
       }
     },
     {
@@ -164,6 +209,15 @@
       }
     },
     {
+      "identity" : "swift-metrics",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/apple/swift-metrics.git",
+      "state" : {
+        "revision" : "4c83e1cdf4ba538ef6e43a9bbd0bcc33a0ca46e3",
+        "version" : "2.7.0"
+      }
+    },
+    {
       "identity" : "swift-nio",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-nio.git",
@@ -251,6 +305,15 @@
       "state" : {
         "revision" : "61e4ca4b81b9e09e2ec863b00c340eb13497dac6",
         "version" : "1.5.0"
+      }
+    },
+    {
+      "identity" : "thrift-swift",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/undefinedlabs/Thrift-Swift",
+      "state" : {
+        "revision" : "18ff09e6b30e589ed38f90a1af23e193b8ecef8e",
+        "version" : "1.1.2"
       }
     },
     {

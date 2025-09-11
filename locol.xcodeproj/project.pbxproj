@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		D27CBC2E2E71C29800F4ECCF /* components.db in Resources */ = {isa = PBXBuildFile; fileRef = D27CBC2D2E71C29800F4ECCF /* components.db */; };
+		D27CBC332E73376C00F4ECCF /* Honeycomb in Frameworks */ = {isa = PBXBuildFile; productRef = D27CBC322E73376C00F4ECCF /* Honeycomb */; };
 		E10DC4EA2D3753BF003EB040 /* exporters in Resources */ = {isa = PBXBuildFile; fileRef = E10DC4E62D3753BF003EB040 /* exporters */; };
 		E10DC4EB2D3753BF003EB040 /* processors in Resources */ = {isa = PBXBuildFile; fileRef = E10DC4E72D3753BF003EB040 /* processors */; };
 		E10DC4EC2D3753BF003EB040 /* receivers in Resources */ = {isa = PBXBuildFile; fileRef = E10DC4E82D3753BF003EB040 /* receivers */; };
@@ -100,6 +101,7 @@
 				E17DF78C2E63A3200027C808 /* Subprocess in Frameworks */,
 				E17DFB3B2E64BF3C0027C808 /* GRPCCore in Frameworks */,
 				E17DFB642E6526880027C808 /* GRDBQuery in Frameworks */,
+				D27CBC332E73376C00F4ECCF /* Honeycomb in Frameworks */,
 				E1E96BD02E6D1AB400066E78 /* STTextView in Frameworks */,
 				E17DFB392E64BF3C0027C808 /* GRPCCodeGen in Frameworks */,
 				E17DFB3D2E64BF3C0027C808 /* GRPCInProcessTransport in Frameworks */,
@@ -204,6 +206,7 @@
 				E17DFB602E6526710027C808 /* GRDB */,
 				E17DFB632E6526880027C808 /* GRDBQuery */,
 				E1E96BCF2E6D1AB400066E78 /* STTextView */,
+				D27CBC322E73376C00F4ECCF /* Honeycomb */,
 			);
 			productName = locol;
 			productReference = E183103C2D3420390070D311 /* locol.app */;
@@ -247,6 +250,7 @@
 				E17DFB5F2E6526710027C808 /* XCRemoteSwiftPackageReference "GRDB.swift" */,
 				E17DFB622E6526880027C808 /* XCRemoteSwiftPackageReference "GRDBQuery" */,
 				E1E96BCE2E6D1AB400066E78 /* XCRemoteSwiftPackageReference "STTextView" */,
+				D27CBC312E73376C00F4ECCF /* XCRemoteSwiftPackageReference "honeycomb-opentelemetry-swift" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = E183103D2D3420390070D311 /* Products */;
@@ -587,6 +591,14 @@
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
+		D27CBC312E73376C00F4ECCF /* XCRemoteSwiftPackageReference "honeycomb-opentelemetry-swift" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/honeycombio/honeycomb-opentelemetry-swift";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 2.1.0;
+			};
+		};
 		E17DF78A2E63A3200027C808 /* XCRemoteSwiftPackageReference "swift-subprocess" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/swiftlang/swift-subprocess.git";
@@ -662,6 +674,11 @@
 /* End XCRemoteSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
+		D27CBC322E73376C00F4ECCF /* Honeycomb */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = D27CBC312E73376C00F4ECCF /* XCRemoteSwiftPackageReference "honeycomb-opentelemetry-swift" */;
+			productName = Honeycomb;
+		};
 		E17DF78B2E63A3200027C808 /* Subprocess */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = E17DF78A2E63A3200027C808 /* XCRemoteSwiftPackageReference "swift-subprocess" */;
