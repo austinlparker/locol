@@ -3,12 +3,10 @@ import SwiftUI
 struct FlagsView: View {
     let collectorId: UUID
     let manager: CollectorManager
+    @Environment(AppContainer.self) private var container
     @State private var flags: String = ""
     @State private var hasChanges = false
-    
-    private var collector: CollectorInstance? {
-        manager.collectors.first { $0.id == collectorId }
-    }
+    @State private var baselineFlags: String = ""
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -53,7 +51,7 @@ struct FlagsView: View {
                     .font(.system(.body, design: .monospaced))
                     .frame(minHeight: 100)
                     .onChange(of: flags) { _, newValue in
-                        hasChanges = newValue != (collector?.commandLineFlags ?? "")
+                        hasChanges = newValue != baselineFlags
                     }
             }
             
@@ -88,11 +86,21 @@ struct FlagsView: View {
     }
     
     private func loadFlags() {
-        flags = collector?.commandLineFlags ?? ""
+        Task {
+            if let rec = try? await container.collectorStore.getCollector(collectorId) {
+                await MainActor.run {
+                    self.flags = rec.flags
+                    self.baselineFlags = rec.flags
+                    self.hasChanges = false
+                }
+            }
+        }
     }
     
     private func saveFlags() {
         manager.updateCollectorFlags(withId: collectorId, flags: flags)
+        baselineFlags = flags
+        hasChanges = false
     }
 }
 

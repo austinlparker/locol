@@ -7,6 +7,27 @@ COLLECTOR_DIR="$WORK_DIR/opentelemetry-collector"
 CONTRIB_DIR="$WORK_DIR/opentelemetry-collector-contrib"
 OUTPUT_DIR="$SCRIPT_DIR/../Resources"
 
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+timestamp() { date '+%Y-%m-%d %H:%M:%S'; }
+
+# Log to stderr to avoid contaminating command substitution outputs
+log() {
+    >&2 echo -e "$(timestamp) ${GREEN}[INFO]${NC} $1"
+}
+
+warn() {
+    >&2 echo -e "$(timestamp) ${YELLOW}[WARN]${NC} $1"
+}
+
+error() {
+    >&2 echo -e "$(timestamp) ${RED}[ERROR]${NC} $1"
+}
+
 # Get the 10 most recent versions from GitHub API
 get_recent_versions() {
     log "Fetching recent collector versions from GitHub..."
@@ -25,26 +46,9 @@ get_recent_versions() {
 
 # Versions to extract (10 most recent)
 log "Getting recent collector versions..."
-VERSIONS=($(get_recent_versions))
+# Read versions line-by-line to avoid word splitting on spaces
+IFS=$'\n' read -r -d '' -a VERSIONS < <(get_recent_versions; printf '\0')
 log "Will extract versions: ${VERSIONS[*]}"
-
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
-
-log() {
-    echo -e "${GREEN}[INFO]${NC} $1"
-}
-
-warn() {
-    echo -e "${YELLOW}[WARN]${NC} $1"
-}
-
-error() {
-    echo -e "${RED}[ERROR]${NC} $1"
-}
 
 # Create work directory
 setup_work_dir() {
@@ -113,8 +117,17 @@ extract_version() {
     
     # Run extraction
     local output_file="configs_${version}.json"
-    log "Running config extraction..."
-    go run extract_configs.go \
+    # Default to quiet extractor unless explicitly overridden by VERBOSE/DEBUG
+    if [ "${VERBOSE:-0}" = "1" ] || [ "${DEBUG:-0}" = "1" ]; then
+        LOCOL_DEBUG=1
+    else
+        LOCOL_DEBUG=0
+    fi
+    log "Running config extraction (LOCOL_DEBUG=${LOCOL_DEBUG})..."
+    if [ "$LOCOL_DEBUG" = "1" ]; then
+        >&2 echo "go run extract_configs.go --version=$version --collector-path=$COLLECTOR_DIR --contrib-path=$CONTRIB_DIR --output=$output_file"
+    fi
+    LOCOL_DEBUG="$LOCOL_DEBUG" go run extract_configs.go \
         --version="$version" \
         --collector-path="$COLLECTOR_DIR" \
         --contrib-path="$CONTRIB_DIR" \

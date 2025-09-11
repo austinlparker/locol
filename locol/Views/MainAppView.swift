@@ -90,9 +90,9 @@ struct MainAppView: View {
                 hasFetchedReleases = true
             }
             
-            // Select first collector by default
-            if selectedItem == nil && !container.collectorManager.collectors.isEmpty {
-                selectedItem = .collector(container.collectorManager.collectors.first!.id)
+            // Select first collector by default (store-backed list)
+            if selectedItem == nil && !container.collectorsViewModel.items.isEmpty {
+                selectedItem = .collector(container.collectorsViewModel.items.first!.id)
             }
         }
     }

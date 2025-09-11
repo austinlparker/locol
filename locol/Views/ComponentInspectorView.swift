@@ -1,4 +1,7 @@
 import SwiftUI
+import Yams
+import AppKit
+import STTextViewSwiftUI
 
 struct ComponentInspectorView: View {
     @Binding var component: ComponentInstance
@@ -20,22 +23,33 @@ struct ComponentInspectorView: View {
             VStack(alignment: .leading, spacing: 20) {
                 // Component header
                 componentHeader
-                
+
                 // Instance name
                 instanceNameSection
-                
+
+                // Validation summary
+                validationSection
+
                 // Configuration fields
-                if !component.definition.fields.isEmpty {
-                    configurationFieldsSection
-                } else {
-                    noConfigurationSection
-                }
+                configurationFieldsSection
             }
             .padding()
         }
         .onChange(of: instanceName) { _, newValue in
+            let base = component.definition.name
+            var corrected = newValue
+            if newValue == base {
+                corrected = base
+            } else if newValue.hasPrefix(base + "/") {
+                corrected = newValue
+            } else {
+                // Force prefix to base, preserve suffix if provided
+                let parts = newValue.split(separator: "/", maxSplits: 1).map(String.init)
+                let suffix = parts.count > 1 ? parts[1] : (parts.first ?? "")
+                corrected = suffix.isEmpty ? base : base + "/" + suffix
+            }
             var updatedComponent = component
-            updatedComponent.instanceName = newValue
+            updatedComponent.instanceName = corrected
             component = updatedComponent
             onConfigChanged(updatedComponent)
         }
@@ -46,7 +60,83 @@ struct ComponentInspectorView: View {
             onConfigChanged(updatedComponent)
         }
     }
-    
+
+    // MARK: - Validation Summary
+
+    private var validationSection: some View {
+        let issues = computeConstraintIssues()
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Validation")
+                .font(.headline)
+            if issues.isEmpty {
+                HStack(spacing: 6) {
+                    Image(systemName: "checkmark.seal.fill").foregroundStyle(.green)
+                    Text("No component-level validation issues detected.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                ForEach(issues, id: \.self) { msg in
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.yellow)
+                        Text(msg)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+    }
+
+    private func computeConstraintIssues() -> [String] {
+        var messages: [String] = []
+        let values = fieldValues
+        func isSet(_ key: String) -> Bool {
+            guard let v = values[key] else { return false }
+            switch v {
+            case .null:
+                return false
+            case .string(let s):
+                return !s.isEmpty
+            case .int(_), .bool(_), .double(_), .duration(_):
+                return true
+            case .stringArray(let arr):
+                return !arr.isEmpty
+            case .stringMap(let m):
+                return !m.isEmpty
+            case .array(let arr):
+                return !arr.isEmpty
+            case .map(let m):
+                return !m.isEmpty
+            }
+        }
+        for c in component.definition.constraints {
+            let count = c.keys.filter { isSet($0) }.count
+            switch c.kind {
+            case "anyOf":
+                if count == 0 {
+                    messages.append("At least one of [\(c.keys.joined(separator: ", "))] must be set.")
+                }
+            case "oneOf":
+                if count != 1 {
+                    messages.append("Exactly one of [\(c.keys.joined(separator: ", "))] must be set (currently \(count)).")
+                }
+            case "atMostOne":
+                if count > 1 {
+                    messages.append("At most one of [\(c.keys.joined(separator: ", "))] may be set (currently \(count)).")
+                }
+            case "allOf":
+                if count != c.keys.count {
+                    messages.append("All of [\(c.keys.joined(separator: ", "))] must be set (currently \(count)/\(c.keys.count)).")
+                }
+            default:
+                break
+            }
+        }
+        return messages
+    }
+
     // MARK: - Component Header
     
     private var componentHeader: some View {
@@ -90,16 +180,42 @@ struct ComponentInspectorView: View {
     
     private var instanceNameSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Instance Name")
+            Text("Component ID")
                 .font(.headline)
-            
-            TextField("Instance name", text: $instanceName)
-                .textFieldStyle(.roundedBorder)
-            
-            Text("This name is used in pipeline configurations and must be unique.")
+            HStack(spacing: 4) {
+                Text("\(component.definition.name)/")
+                    .fontDesign(.monospaced)
+                TextField("amusing-walrus", text: suffixBinding, prompt: Text("amusing-walrus"))
+                    .textFieldStyle(.roundedBorder)
+                    .fontDesign(.monospaced)
+            }
+            Text("This becomes the YAML key (e.g., receivers: { \(component.definition.name)/suffix: … }).")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    private var suffixBinding: Binding<String> {
+        Binding<String>(
+            get: {
+                let base = component.definition.name
+                if instanceName == base { return "" }
+                if instanceName.hasPrefix(base + "/") { return String(instanceName.dropFirst(base.count + 1)) }
+                // Fallback: if external code set a different base, preserve suffix portion after first '/'
+                if let range = instanceName.firstIndex(of: "/") {
+                    return String(instanceName[instanceName.index(after: range)...])
+                }
+                return ""
+            },
+            set: { newSuffix in
+                let base = component.definition.name
+                let trimmed = newSuffix.trimmingCharacters(in: .whitespacesAndNewlines)
+                let combined = trimmed.isEmpty ? base : base + "/" + trimmed
+                if combined != instanceName {
+                    instanceName = combined
+                }
+            }
+        )
     }
     
     // MARK: - Configuration Fields
@@ -109,42 +225,17 @@ struct ComponentInspectorView: View {
             Text("Configuration")
                 .font(.headline)
             
-            LazyVStack(alignment: .leading, spacing: 12) {
-                ForEach(groupedFields.keys.sorted(), id: \.self) { group in
-                    DisclosureGroup(isExpanded: .init(
-                        get: { expandedSections.contains(group) },
-                        set: { isExpanded in
-                            if isExpanded {
-                                expandedSections.insert(group)
-                            } else {
-                                expandedSections.remove(group)
-                            }
-                        }
-                    )) {
-                        VStack(alignment: .leading, spacing: 12) {
-                            ForEach(groupedFields[group] ?? [], id: \.id) { field in
-                                ConfigFieldEditorView(
-                                    field: field,
-                                    value: binding(for: field),
-                                    defaultValue: defaultValue(for: field)
-                                )
-                            }
-                        }
-                    } label: {
-                        HStack {
-                            Text(group.capitalized)
-                                .font(.subheadline)
-                                .fontWeight(.medium)
-                            
-                            Spacer()
-                            
-                            Text("\(groupedFields[group]?.count ?? 0)")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                }
+            // Merge DB-defined fields with inferred ones from constraints and current config
+            let tree = buildFieldTree(from: mergedFields())
+            FieldTreeView(node: tree, expandedSections: $expandedSections) { field in
+                ConfigFieldEditorView(
+                    field: field,
+                    value: binding(for: field),
+                    defaultValue: defaultValue(for: field)
+                )
             }
+            .onAppear { seedExpansion(for: tree) }
+            .onChange(of: component.definition.id) { _, _ in seedExpansion(for: tree) }
         }
     }
     
@@ -171,37 +262,131 @@ struct ComponentInspectorView: View {
     
     // MARK: - Helper Properties
     
-    private var groupedFields: [String: [ConfigField]] {
-        let fields = component.definition.fields
-        
-        // Group fields by category (could be enhanced with better categorization)
-        var groups: [String: [ConfigField]] = [:]
-        
-        for field in fields {
-            let group = fieldGroup(for: field)
-            if groups[group] == nil {
-                groups[group] = []
-            }
-            groups[group]?.append(field)
+    // Build a hierarchical tree from dotted yaml keys
+    private func buildFieldTree(from fields: [ConfigField]) -> FieldTreeNode {
+        var root = FieldTreeNode(name: "root")
+        for f in fields.sorted(by: { $0.yamlKey < $1.yamlKey }) {
+            let parts = f.yamlKey.split(separator: ".").map(String.init)
+            root.insert(parts: parts, field: f)
         }
-        
-        return groups
+        return root
     }
-    
-    private func fieldGroup(for field: ConfigField) -> String {
-        let fieldName = field.fieldName.lowercased()
-        let yamlKey = field.yamlKey.lowercased()
-        
-        if fieldName.contains("tls") || fieldName.contains("ssl") || yamlKey.contains("tls") {
-            return "security"
-        } else if fieldName.contains("timeout") || fieldName.contains("interval") || fieldName.contains("duration") {
-            return "timing"
-        } else if fieldName.contains("endpoint") || fieldName.contains("address") || fieldName.contains("host") || fieldName.contains("port") {
-            return "networking"
-        } else if fieldName.contains("auth") || fieldName.contains("token") || fieldName.contains("key") {
-            return "authentication"
-        } else {
-            return "basic"
+
+    // Merge schema fields with synthetic fields inferred from constraints and existing config.
+    // This makes advanced/nested groups (e.g., protocols.grpc, tls, http) visible even when
+    // the bundled schema lacks explicit leaf entries.
+    private func mergedFields() -> [ConfigField] {
+        var result = component.definition.fields
+        var seen = Set(result.map { $0.yamlKey })
+
+        // 1) Add constraint keys as virtual map groups when missing
+        for constraint in component.definition.constraints {
+            for key in constraint.keys where !seen.contains(key) {
+                result.append(makeVirtualField(yamlKey: key, preferred: .map, description: "Advanced configuration group"))
+                seen.insert(key)
+            }
+        }
+
+        // 2) Add any keys present in current configuration but absent in schema
+        for (key, value) in fieldValues where !seen.contains(key) {
+            let inferredType = inferFieldType(from: value)
+            result.append(makeVirtualField(yamlKey: key, preferred: inferredType, description: "Imported or custom field"))
+            seen.insert(key)
+        }
+
+        // 3) Add keys from defaults as typed leaves when missing
+        for d in component.definition.defaults {
+            let key = d.yamlKey
+            guard !key.isEmpty, !seen.contains(key), let any = d.defaultValue else { continue }
+            let t = inferFieldType(fromAny: any)
+            result.append(makeVirtualField(yamlKey: key, preferred: t, description: "Defaulted field"))
+            seen.insert(key)
+        }
+
+        // 4) Mine examples for additional nested leaves
+        for ex in component.definition.examples {
+            guard let any = try? Yams.load(yaml: ex.exampleYaml), let dict = any as? [String: Any] else { continue }
+            let flat = flatten(dict)
+            for (key, val) in flat where !seen.contains(key) {
+                result.append(makeVirtualField(yamlKey: key, preferred: inferFieldType(fromAny: val), description: "Example-derived field"))
+                seen.insert(key)
+            }
+        }
+
+        return result
+    }
+
+    private func makeVirtualField(yamlKey: String, preferred: ConfigFieldType, description: String) -> ConfigField {
+        let name = yamlKey.split(separator: ".").last.map(String.init) ?? yamlKey
+        return ConfigField(
+            id: Int.random(in: -2_000_000..<0),
+            componentId: component.definition.id,
+            fieldName: name,
+            yamlKey: yamlKey,
+            fieldType: preferred,
+            goType: "any",
+            description: description,
+            required: false,
+            validationJson: nil
+        )
+    }
+
+    private func inferFieldType(from value: ConfigValue) -> ConfigFieldType {
+        switch value {
+        case .string(_): return .string
+        case .int(_): return .int
+        case .bool(_): return .bool
+        case .double(_): return .double
+        case .duration(_): return .duration
+        case .stringArray(_): return .stringArray
+        case .array(_): return .array
+        case .stringMap(_): return .stringMap
+        case .map(_): return .map
+        case .null: return .map
+        }
+    }
+
+    private func inferFieldType(fromAny any: Any) -> ConfigFieldType {
+        if let s = any as? String { return isDurationString(s) ? .duration : .string }
+        if any is Bool { return .bool }
+        if any is Int { return .int }
+        if any is Double { return .double }
+        if any is [String] { return .stringArray }
+        if any is [String: String] { return .stringMap }
+        if any is [Any] { return .array }
+        if any is [String: Any] { return .map }
+        return .custom
+    }
+
+    private func isDurationString(_ s: String) -> Bool {
+        let pattern = "^(?:\\d+)(?:ms|s|m|h)$"
+        if let _ = s.range(of: pattern, options: .regularExpression) { return true }
+        return false
+    }
+
+    private func flatten(_ dict: [String: Any], prefix: String = "") -> [String: Any] {
+        var out: [String: Any] = [:]
+        for (k, v) in dict {
+            let key = prefix.isEmpty ? k : "\(prefix).\(k)"
+            if let sub = v as? [String: Any] {
+                let nested = flatten(sub, prefix: key)
+                for (nk, nv) in nested { out[nk] = nv }
+            } else {
+                out[key] = v
+            }
+        }
+        return out
+    }
+
+    private func seedExpansion(for tree: FieldTreeNode) {
+        // If there are no root-level leaves, auto-expand first-level groups for discoverability
+        let hasRootLeaves = !tree.fields.isEmpty
+        if !hasRootLeaves {
+            let top = tree.children.keys
+            // Expand common groups first
+            let preferred: Set<String> = ["protocols", "tls", "http", "grpc"]
+            let toExpand = top.filter { preferred.contains($0) } + top.filter { !preferred.contains($0) }
+            for key in toExpand { expandedSections.insert(key) }
         }
     }
     
@@ -215,7 +400,8 @@ struct ComponentInspectorView: View {
     }
     
     private func defaultValue(for field: ConfigField) -> ConfigValue? {
-        guard let defaultVal = component.definition.defaults.first(where: { $0.fieldName == field.fieldName }),
+        // Prefer matching by YAML key to support nested fields
+        guard let defaultVal = component.definition.defaults.first(where: { $0.yamlKey == field.yamlKey || $0.fieldName == field.fieldName }),
               let value = defaultVal.defaultValue else {
             return nil
         }
@@ -285,6 +471,9 @@ struct ConfigFieldEditorView: View {
     let defaultValue: ConfigValue?
     
     @State private var isUsingDefault = true
+    @State private var showComplexEditor = false
+    @State private var complexEditorText: String = ""
+    @State private var complexEditorError: String? = nil
     
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -322,6 +511,17 @@ struct ConfigFieldEditorView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+            }
+            // YAML key for nested context
+            Text("Key: \(field.yamlKey)")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .fontDesign(.monospaced)
+            // Field validation notes
+            if let notes = validationNotes, !notes.isEmpty {
+                Text(notes)
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
             
             // Field editor
@@ -366,6 +566,21 @@ struct ConfigFieldEditorView: View {
                 isUsingDefault = false
             }
         }
+        // Complex editor modal
+        .sheet(isPresented: $showComplexEditor) {
+            ComplexValueEditor(
+                title: field.displayName,
+                yamlKey: field.yamlKey,
+                initialValue: value,
+                expectedType: field.fieldType,
+                onSave: { newVal in
+                    value = newVal
+                    showComplexEditor = false
+                },
+                onCancel: { showComplexEditor = false }
+            )
+            .frame(minWidth: 520, minHeight: 420)
+        }
     }
     
     @ViewBuilder
@@ -409,9 +624,13 @@ struct ConfigFieldEditorView: View {
                 .textFieldStyle(.roundedBorder)
                 
         case .array, .map:
-            Text("Complex type - edit in YAML mode")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Text("Complex value")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button("Edit…") { showComplexEditor = true }
+            }
         }
     }
     
@@ -506,6 +725,90 @@ struct ConfigFieldEditorView: View {
             let minutes = Int(duration / 60)
             return "\(minutes)m"
         }
+    }
+}
+
+// Field-level validation rendering helpers
+private extension ConfigFieldEditorView {
+    var validationNotes: String? {
+        let v = field.validation
+        var parts: [String] = []
+        if let min = v["min"], !min.isEmpty { parts.append(">= \(min)") }
+        if let minEx = v["minExclusive"], !minEx.isEmpty { parts.append("> \(minEx)") }
+        if let max = v["max"], !max.isEmpty { parts.append("<= \(max)") }
+        if let maxEx = v["maxExclusive"], !maxEx.isEmpty { parts.append("< \(maxEx)") }
+        if let anyOf = v["anyOf"], !anyOf.isEmpty { parts.append("Group: anyOf(\(anyOf))") }
+        guard !parts.isEmpty else { return nil }
+        return "Constraints: " + parts.joined(separator: ", ")
+    }
+}
+
+// MARK: - Field Tree
+
+private struct FieldTreeNode: Identifiable, Hashable {
+    let id = UUID()
+    let name: String
+    var children: [String: FieldTreeNode] = [:]
+    var fields: [ConfigField] = []
+    
+    mutating func insert(parts: [String], field: ConfigField) {
+        guard let first = parts.first else {
+            fields.append(field)
+            return
+        }
+        if parts.count == 1 {
+            fields.append(field)
+            return
+        }
+        var child = children[first] ?? FieldTreeNode(name: first)
+        child.insert(parts: Array(parts.dropFirst()), field: field)
+        children[first] = child
+    }
+}
+
+private struct FieldTreeView<Leaf: View>: View {
+    let node: FieldTreeNode
+    @Binding var expandedSections: Set<String>
+    let leafView: (ConfigField) -> Leaf
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Render leaves at this level
+            ForEach(node.fields, id: \.id) { field in
+                leafView(field)
+            }
+            // Render children
+            ForEach(node.children.keys.sorted(), id: \.self) { key in
+                if let child = node.children[key] {
+                    DisclosureGroup(isExpanded: .init(
+                        get: { expandedSections.contains(pathKey(child)) },
+                        set: { isExpanded in
+                            if isExpanded { expandedSections.insert(pathKey(child)) }
+                            else { expandedSections.remove(pathKey(child)) }
+                        }
+                    )) {
+                        FieldTreeView(node: child, expandedSections: $expandedSections, leafView: leafView)
+                            .padding(.leading, 6)
+                    } label: {
+                        Text(key)
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                    }
+                }
+            }
+        }
+    }
+    
+    private func pathKey(_ n: FieldTreeNode) -> String {
+        // Compose a stable path from the first leaf's yamlKey up to node name
+        if let f = n.fields.first {
+            let parts = f.yamlKey.split(separator: ".").map(String.init)
+            if let idx = parts.firstIndex(of: n.name) {
+                return parts.prefix(idx+1).joined(separator: ".")
+            }
+        }
+        // Fallback to node name
+        return n.name
     }
 }
 
@@ -678,6 +981,170 @@ struct StringMapEditor: View {
             newKey = ""
             newValue = ""
         }
+    }
+}
+
+// MARK: - Complex Value Editor
+
+struct ComplexValueEditor: View {
+    let title: String
+    let yamlKey: String
+    let initialValue: ConfigValue
+    let expectedType: ConfigFieldType
+    let onSave: (ConfigValue) -> Void
+    let onCancel: () -> Void
+    
+    @State private var text: String = ""
+    @State private var error: String? = nil
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading) {
+                    Text("Configure \(title)")
+                        .font(.headline)
+                    Text("Key: \(yamlKey)")
+                        .font(.caption2)
+                        .fontDesign(.monospaced)
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer()
+            }
+            
+            Text("Enter YAML for this value. Nested structures are supported.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            
+            YAMLCodeEditor(text: $text)
+                .frame(minHeight: 260)
+            
+            if let error = error {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+            
+            HStack {
+                Spacer()
+                Button("Cancel") { onCancel() }
+                Button("Save") { save() }
+                    .keyboardShortcut(.return)
+            }
+        }
+        .padding()
+        .onAppear { text = encodeYAML(from: initialValue) }
+    }
+    
+    private func save() {
+        do {
+            let any = try Yams.load(yaml: text)
+            guard let anyVal = any else {
+                error = "YAML is empty"
+                return
+            }
+            if let newVal = convertAnyToConfigValue(anyVal, expected: expectedType) {
+                onSave(newVal)
+            } else {
+                error = "Value does not match expected type (\(expectedType.rawValue))"
+            }
+        } catch {
+            self.error = "Parse error: \(error.localizedDescription)"
+        }
+    }
+    
+    private func encodeYAML(from value: ConfigValue) -> String {
+        let any = toAny(value)
+        if let y = try? Yams.dump(object: any, indent: 2, width: 120) { return y }
+        return ""
+    }
+    
+    private func toAny(_ value: ConfigValue) -> Any {
+        switch value {
+        case .string(let s): return s
+        case .int(let i): return i
+        case .bool(let b): return b
+        case .double(let d): return d
+        case .duration(let t): return t
+        case .stringArray(let a): return a
+        case .array(let a): return a.map { toAny($0) }
+        case .stringMap(let m): return m
+        case .map(let m):
+            var out: [String: Any] = [:]
+            for (k, v) in m { out[k] = toAny(v) }
+            return out
+        case .null: return ""
+        }
+    }
+    
+    private func convertAnyToConfigValue(_ any: Any, expected: ConfigFieldType) -> ConfigValue? {
+        switch expected {
+        case .map:
+            if let dict = any as? [String: Any] {
+                var out: [String: ConfigValue] = [:]
+                for (k, v) in dict { out[k] = convertAnyToConfigValue(v, expected: .custom) ?? .null }
+                return .map(out)
+            } else if let dict = any as? [String: String] {
+                return .stringMap(dict)
+            }
+        case .array:
+            if let arr = any as? [Any] {
+                let out = arr.map { convertAnyToConfigValue($0, expected: .custom) ?? .null }
+                return .array(out)
+            } else if let arr = any as? [String] {
+                return .stringArray(arr)
+            }
+        case .custom:
+            // Heuristic mapping
+            if let s = any as? String { return .string(s) }
+            if let b = any as? Bool { return .bool(b) }
+            if let i = any as? Int { return .int(i) }
+            if let d = any as? Double { return .double(d) }
+            if let dict = any as? [String: String] { return .stringMap(dict) }
+            if let dict = any as? [String: Any] {
+                var out: [String: ConfigValue] = [:]
+                for (k, v) in dict { out[k] = convertAnyToConfigValue(v, expected: .custom) ?? .null }
+                return .map(out)
+            }
+            if let arr = any as? [String] { return .stringArray(arr) }
+            if let arr = any as? [Any] {
+                let out = arr.map { convertAnyToConfigValue($0, expected: .custom) ?? .null }
+                return .array(out)
+            }
+        default:
+            // Not a complex type; try scalar cast
+            if case .string = expected, let s = any as? String { return .string(s) }
+            if case .bool = expected, let b = any as? Bool { return .bool(b) }
+            if case .int = expected, let i = any as? Int { return .int(i) }
+            if case .double = expected, let d = any as? Double { return .double(d) }
+        }
+        return nil
+    }
+}
+
+// MARK: - STTextView-backed YAML editor (with fallback)
+
+private struct YAMLCodeEditor: View {
+    @Binding var text: String
+    @State private var richText: AttributedString = AttributedString("")
+    @State private var selection: NSRange? = nil
+    var body: some View {
+        TextView(
+            text: $richText,
+            selection: $selection,
+            options: [.wrapLines, .highlightSelectedLine],
+            plugins: []
+        )
+        .textViewFont(.monospacedSystemFont(ofSize: 12, weight: .regular))
+        .onAppear { richText = AttributedString(text) }
+        .onChange(of: text) { _, newValue in
+            let current = String(richText.characters)
+            if current != newValue { richText = AttributedString(newValue) }
+        }
+        .onChange(of: richText) { _, newValue in
+            let s = String(newValue.characters)
+            if s != text { text = s }
+        }
+        .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.secondary.opacity(0.2)))
     }
 }
 

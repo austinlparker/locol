@@ -45,22 +45,16 @@ struct DetailView: View {
 struct CollectorDetailView: View {
     let collectorId: UUID
     @Environment(AppContainer.self) private var container
-    
-    var collector: CollectorInstance? {
-        container.collectorManager.collectors.first { $0.id == collectorId }
-    }
+    @State private var record: CollectorRecord? = nil
     
     var body: some View {
-        if let collector = collector {
-            PipelineDesignerView(collectorId: collectorId)
-                .navigationTitle(collector.name)
-                .navigationSubtitle(collector.version)
-        } else {
-            ContentUnavailableView(
-                "Collector Not Found",
-                systemImage: "exclamationmark.triangle",
-                description: Text("The selected collector could not be found.")
-            )
-        }
+        PipelineDesignerView(collectorId: collectorId)
+            .navigationTitle(record?.name ?? "Collector")
+            .navigationSubtitle(record?.version ?? "")
+            .task {
+                if record == nil {
+                    record = try? await container.collectorStore.getCollector(collectorId)
+                }
+            }
     }
 }

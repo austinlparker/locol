@@ -5,7 +5,7 @@ import GRDB
 // MARK: - Component System Models
 
 /// Represents a component type in the OpenTelemetry collector
-enum ComponentType: String, CaseIterable, Codable {
+enum ComponentType: String, CaseIterable, Codable, Sendable {
     case receiver
     case processor
     case exporter
@@ -33,7 +33,7 @@ enum ComponentType: String, CaseIterable, Codable {
 }
 
 /// Field type mapping from Go types to Swift representation
-enum ConfigFieldType: String, Codable, CaseIterable {
+enum ConfigFieldType: String, Codable, CaseIterable, Sendable {
     case string
     case int
     case bool
@@ -84,7 +84,7 @@ enum ConfigFieldType: String, Codable, CaseIterable {
 }
 
 /// UI control types for config fields
-enum ConfigControlType {
+enum ConfigControlType: Sendable {
     case textField
     case numberField
     case toggle
@@ -119,7 +119,7 @@ extension ComponentVersion: FetchableRecord {
 }
 
 /// Represents a component definition with its configuration schema
-struct ComponentDefinition: Codable, Identifiable, Hashable {
+struct ComponentDefinition: Codable, Identifiable, Hashable, Sendable {
     let id: Int
     let name: String
     let type: ComponentType
@@ -132,6 +132,7 @@ struct ComponentDefinition: Codable, Identifiable, Hashable {
     var fields: [ConfigField] = []
     var defaults: [DefaultValue] = []
     var examples: [ConfigExample] = []
+    var constraints: [ComponentConstraint] = []
     
     var displayName: String {
         name.replacingOccurrences(of: type.rawValue, with: "").capitalized
@@ -164,11 +165,12 @@ extension ComponentDefinition: FetchableRecord {
         self.fields = []
         self.defaults = []
         self.examples = []
+        self.constraints = []
     }
 }
 
 /// Represents a configuration field
-struct ConfigField: Codable, Identifiable, Hashable {
+struct ConfigField: Codable, Identifiable, Hashable, Sendable {
     let id: Int
     let componentId: Int
     let fieldName: String
@@ -222,10 +224,11 @@ extension ConfigField: FetchableRecord {
 }
 
 /// Represents a default value for a configuration field
-struct DefaultValue: Codable, Identifiable, Hashable {
+struct DefaultValue: Codable, Identifiable, Hashable, Sendable {
     let id: Int
     let componentId: Int
     let fieldName: String
+    let yamlKey: String
     let defaultValueJson: String
     
     /// Parsed default value
@@ -248,12 +251,13 @@ extension DefaultValue: FetchableRecord {
         self.id = row["id"]
         self.componentId = row["component_id"]
         self.fieldName = row["field_name"]
+        self.yamlKey = row["yaml_key"]
         self.defaultValueJson = row["default_value"]
     }
 }
 
 /// Represents a configuration example
-struct ConfigExample: Codable, Identifiable, Hashable {
+struct ConfigExample: Codable, Identifiable, Hashable, Sendable {
     let id: Int
     let componentId: Int
     let exampleYaml: String
@@ -265,6 +269,41 @@ struct ConfigExample: Codable, Identifiable, Hashable {
     
     static func == (lhs: ConfigExample, rhs: ConfigExample) -> Bool {
         lhs.id == rhs.id
+    }
+}
+
+// Component-level validation constraints
+struct ComponentConstraint: Codable, Identifiable, Hashable, Sendable {
+    let id: Int
+    let componentId: Int
+    let kind: String  // anyOf, oneOf, allOf, atMostOne
+    let keysJson: String
+    let message: String?
+    
+    var keys: [String] {
+        guard let data = keysJson.data(using: .utf8),
+              let arr = try? JSONSerialization.jsonObject(with: data) as? [String] else {
+            return []
+        }
+        return arr
+    }
+    
+    func hash(into hasher: inout Hasher) {
+        hasher.combine(id)
+    }
+    
+    static func == (lhs: ComponentConstraint, rhs: ComponentConstraint) -> Bool {
+        lhs.id == rhs.id
+    }
+}
+
+extension ComponentConstraint: FetchableRecord {
+    init(row: Row) {
+        self.id = row["id"]
+        self.componentId = row["component_id"]
+        self.kind = row["kind"]
+        self.keysJson = row["keys_json"]
+        self.message = row["message"]
     }
 }
 
@@ -280,7 +319,7 @@ extension ConfigExample: FetchableRecord {
 // MARK: - Configuration Value Types
 
 /// Represents a value for a configuration field
-enum ConfigValue: Codable, Equatable {
+enum ConfigValue: Codable, Equatable, Sendable {
     case string(String)
     case int(Int)
     case bool(Bool)
@@ -336,7 +375,7 @@ enum ConfigValue: Codable, Equatable {
 // MARK: - Component Instance Configuration
 
 /// Represents a configured component instance in a pipeline
-struct ComponentInstance: Codable, Identifiable, Hashable {
+struct ComponentInstance: Codable, Identifiable, Hashable, Sendable {
     let id = UUID()
     let definition: ComponentDefinition
     var instanceName: String // e.g., "otlp/internal", "batch/traces"
@@ -359,7 +398,7 @@ struct ComponentInstance: Codable, Identifiable, Hashable {
 }
 
 /// Represents a pipeline configuration
-struct PipelineConfiguration: Codable, Identifiable, Hashable {
+struct PipelineConfiguration: Codable, Identifiable, Hashable, Sendable {
     let id = UUID()
     var name: String // traces, metrics, logs
     var receivers: [ComponentInstance] = []
@@ -380,7 +419,7 @@ struct PipelineConfiguration: Codable, Identifiable, Hashable {
 }
 
 /// Complete collector configuration
-struct CollectorConfiguration: Codable, Identifiable, Hashable {
+struct CollectorConfiguration: Codable, Identifiable, Hashable, Sendable {
     let id = UUID()
     var version: String
     var receivers: [ComponentInstance] = []

@@ -6,12 +6,14 @@ import Yams
 @Observable
 final class AppContainer {
     let storage: TelemetryStorage
+    let collectorStore: CollectorStore
     let settings: OTLPReceiverSettings
     let server: OTLPServer
     let viewer: TelemetryViewer
     let snippetManager: ConfigSnippetManager
     let collectorManager: CollectorManager
     let componentDatabase: ComponentDatabase
+    let collectorsViewModel: CollectorsViewModel
     
     // Pipeline Designer state hoisted for Inspector-driven editing
     var pipelineConfig: CollectorConfiguration = CollectorConfiguration(version: "v0.135.0")
@@ -21,31 +23,32 @@ final class AppContainer {
     init() {
         self.storage = TelemetryStorage()
         self.settings = OTLPReceiverSettings()
+        self.collectorStore = CollectorStore()
         self.server = OTLPServer(storage: storage, settings: settings)
         self.viewer = TelemetryViewer(storage: storage)
         self.snippetManager = ConfigSnippetManager(settings: settings)
-        self.collectorManager = CollectorManager(settings: settings, storage: storage)
+        self.collectorManager = CollectorManager(settings: settings, storage: storage, collectorStore: collectorStore)
         self.componentDatabase = ComponentDatabase()
+        self.collectorsViewModel = CollectorsViewModel(store: collectorStore)
     }
 
     // MARK: - Pipeline Loading
-    func loadCollectorConfiguration(for collector: CollectorInstance) async {
-        do {
-            let configPath = collector.configPath
-            let yamlContent = try String(contentsOfFile: configPath, encoding: .utf8)
-            do {
-                let loadedConfig = try await ConfigSerializer.parseYAML(yamlContent, version: collector.version)
-                self.pipelineConfig = loadedConfig
-                self.selectedPipeline = loadedConfig.pipelines.first
-            } catch {
-                // Fall back to default configuration with collector's version
-                self.pipelineConfig = CollectorConfiguration(version: collector.version)
+    func loadCollectorConfiguration(forCollectorId id: UUID) async {
+        // Prefer DB-typed config; fall back to default version if no config yet
+        if let (versionId, config) = try? await collectorStore.getCurrentConfig(id) {
+            _ = versionId // currently unused; keep in case we show revision
+            await MainActor.run {
+                self.pipelineConfig = config
+                self.selectedPipeline = config.pipelines.first
+            }
+            return
+        }
+        // Fall back: use record to determine version
+        if let record = try? await collectorStore.getCollector(id) {
+            await MainActor.run {
+                self.pipelineConfig = CollectorConfiguration(version: record.version)
                 self.selectedPipeline = self.pipelineConfig.pipelines.first
             }
-        } catch {
-            // Fall back to default configuration with collector's version
-            self.pipelineConfig = CollectorConfiguration(version: collector.version)
-            self.selectedPipeline = self.pipelineConfig.pipelines.first
         }
     }
 }

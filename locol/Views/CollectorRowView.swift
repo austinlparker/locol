@@ -39,17 +39,10 @@ struct CollectorRowView: View {
     }
     
     private var statusIndicator: some View {
-        let baseCircle = Circle()
+        Circle()
             .fill(statusColor)
             .frame(width: 8, height: 8)
             .shadow(color: statusColor.opacity(0.3), radius: 2, x: 0, y: 1)
-        
-        if #available(macOS 26.0, *) {
-            return baseCircle
-                .glassEffect(.regular, in: Circle())
-        } else {
-            return baseCircle
-        }
     }
     
     private var statusColor: Color {

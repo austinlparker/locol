@@ -19,18 +19,19 @@ type ExtractedData struct {
 }
 
 type Component struct {
-	Name        string       `json:"name"`
-	Type        string       `json:"type"`
-	Module      string       `json:"module"`
-	Description string       `json:"description"`
-	Config      ConfigSchema `json:"config"`
+    Name        string       `json:"name"`
+    Type        string       `json:"type"`
+    Module      string       `json:"module"`
+    Description string       `json:"description"`
+    Config      ConfigSchema `json:"config"`
+    Constraints []Constraint `json:"constraints"`
 }
 
 type ConfigSchema struct {
-	StructName string        `json:"struct_name"`
-	Fields     []ConfigField `json:"fields"`
-	Defaults   []DefaultValue `json:"defaults"`
-	Examples   []string      `json:"examples"`
+    StructName string        `json:"struct_name"`
+    Fields     []ConfigField `json:"fields"`
+    Defaults   []DefaultValue `json:"defaults"`
+    Examples   []string      `json:"examples"`
 }
 
 type ConfigField struct {
@@ -44,8 +45,24 @@ type ConfigField struct {
 }
 
 type DefaultValue struct {
-	FieldName string      `json:"field_name"`
-	Value     interface{} `json:"value"`
+    FieldName string      `json:"field_name"`
+    YamlKey   string      `json:"yaml_key"`
+    Value     interface{} `json:"value"`
+}
+
+type Constraint struct {
+    Kind    string   `json:"kind"`   // anyOf, oneOf, allOf, atMostOne
+    Keys    []string `json:"keys"`   // YAML keys
+    Message string   `json:"message,omitempty"`
+}
+
+// Debug logging (enabled when LOCOL_DEBUG=1)
+var debug = os.Getenv("LOCOL_DEBUG") == "1"
+
+func dbgf(format string, args ...interface{}) {
+    if debug {
+        fmt.Fprintf(os.Stderr, format, args...)
+    }
 }
 
 var (
@@ -88,9 +105,9 @@ func main() {
 
 	// Process each input file
 	for _, file := range files {
-		fmt.Printf("Processing %s...\n", file)
+		dbgf("Processing %s...\n", file)
 		if err := processFile(db, file); err != nil {
-			fmt.Printf("Error processing %s: %v\n", file, err)
+			dbgf("Error processing %s: %v\n", file, err)
 			continue
 		}
 	}
@@ -107,7 +124,7 @@ func main() {
 }
 
 func createSchema(db *sql.DB) error {
-	schema := `
+    schema := `
 	-- Collector versions
 	CREATE TABLE collector_versions (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -143,38 +160,50 @@ func createSchema(db *sql.DB) error {
 		FOREIGN KEY (component_id) REFERENCES components(id)
 	);
 
-	-- Default values
-	CREATE TABLE default_values (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		component_id INTEGER NOT NULL,
-		field_name TEXT NOT NULL,
-		default_value TEXT, -- JSON-encoded value
-		FOREIGN KEY (component_id) REFERENCES components(id)
-	);
+    -- Default values
+    CREATE TABLE default_values (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        component_id INTEGER NOT NULL,
+        field_name TEXT NOT NULL,
+        yaml_key TEXT NOT NULL,
+        default_value TEXT, -- JSON-encoded value
+        FOREIGN KEY (component_id) REFERENCES components(id)
+    );
 
-	-- Config examples (for future use)
-	CREATE TABLE config_examples (
-		id INTEGER PRIMARY KEY AUTOINCREMENT,
-		component_id INTEGER NOT NULL,
-		example_yaml TEXT NOT NULL,
-		description TEXT,
-		FOREIGN KEY (component_id) REFERENCES components(id)
-	);
-	`
+    -- Config examples (for future use)
+    CREATE TABLE config_examples (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        component_id INTEGER NOT NULL,
+        example_yaml TEXT NOT NULL,
+        description TEXT,
+        FOREIGN KEY (component_id) REFERENCES components(id)
+    );
+
+    -- Component-level validation constraints
+    CREATE TABLE component_constraints (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        component_id INTEGER NOT NULL,
+        kind TEXT NOT NULL, -- anyOf, oneOf, allOf, atMostOne
+        keys_json TEXT NOT NULL, -- JSON array of YAML keys
+        message TEXT,
+        FOREIGN KEY (component_id) REFERENCES components(id)
+    );
+    `
 
 	_, err := db.Exec(schema)
 	return err
 }
 
 func createIndexes(db *sql.DB) error {
-	indexes := []string{
+    indexes := []string{
 		"CREATE INDEX idx_version ON collector_versions(version);",
 		"CREATE INDEX idx_component_version ON components(name, type, version_id);",
 		"CREATE INDEX idx_component_type ON components(type);",
 		"CREATE INDEX idx_field_component ON config_fields(component_id);",
 		"CREATE INDEX idx_field_yaml_key ON config_fields(yaml_key);",
-		"CREATE INDEX idx_default_component ON default_values(component_id);",
-	}
+        "CREATE INDEX idx_default_component ON default_values(component_id);",
+        "CREATE INDEX idx_constraint_component ON component_constraints(component_id);",
+    }
 
 	for _, idx := range indexes {
 		if _, err := db.Exec(idx); err != nil {
@@ -248,21 +277,28 @@ func insertComponent(db *sql.DB, component Component, versionID int64) error {
 		return err
 	}
 
-	// Insert config fields
-	for _, field := range component.Config.Fields {
-		if err := insertConfigField(db, field, componentID); err != nil {
-			return err
-		}
-	}
+    // Insert config fields
+    for _, field := range component.Config.Fields {
+        if err := insertConfigField(db, field, componentID); err != nil {
+            return err
+        }
+    }
 
-	// Insert default values
-	for _, def := range component.Config.Defaults {
-		if err := insertDefaultValue(db, def, componentID); err != nil {
-			return err
-		}
-	}
+    // Insert default values
+    for _, def := range component.Config.Defaults {
+        if err := insertDefaultValue(db, def, componentID); err != nil {
+            return err
+        }
+    }
 
-	return nil
+    // Insert component constraints
+    for _, c := range component.Constraints {
+        if err := insertConstraint(db, c, componentID); err != nil {
+            return err
+        }
+    }
+
+    return nil
 }
 
 func insertConfigField(db *sql.DB, field ConfigField, componentID int64) error {
@@ -286,18 +322,36 @@ func insertConfigField(db *sql.DB, field ConfigField, componentID int64) error {
 }
 
 func insertDefaultValue(db *sql.DB, def DefaultValue, componentID int64) error {
-	// Convert value to JSON string
-	valueJSON, err := json.Marshal(def.Value)
-	if err != nil {
-		return err
-	}
+    // Convert value to JSON string
+    valueJSON, err := json.Marshal(def.Value)
+    if err != nil {
+        return err
+    }
 
-	_, err = db.Exec(`
-		INSERT INTO default_values (component_id, field_name, default_value)
-		VALUES (?, ?, ?)`,
-		componentID, def.FieldName, string(valueJSON))
+    // Prefer YAML key if present; fall back to field name
+    yamlKey := def.YamlKey
+    if yamlKey == "" {
+        yamlKey = def.FieldName
+    }
 
-	return err
+    _, err = db.Exec(`
+        INSERT INTO default_values (component_id, field_name, yaml_key, default_value)
+        VALUES (?, ?, ?, ?)`,
+        componentID, def.FieldName, yamlKey, string(valueJSON))
+
+    return err
+}
+
+func insertConstraint(db *sql.DB, c Constraint, componentID int64) error {
+    keysJSONBytes, err := json.Marshal(c.Keys)
+    if err != nil {
+        return err
+    }
+    _, err = db.Exec(`
+        INSERT INTO component_constraints (component_id, kind, keys_json, message)
+        VALUES (?, ?, ?, ?)`,
+        componentID, c.Kind, string(keysJSONBytes), c.Message)
+    return err
 }
 
 func printSummary(db *sql.DB) error {

@@ -2,6 +2,13 @@ import Foundation
 import Yams
 
 /// Serializes collector configurations to/from YAML
+struct OverlaySettings: Sendable, Equatable {
+    let grpcEndpoint: String
+    let tracesEnabled: Bool
+    let metricsEnabled: Bool
+    let logsEnabled: Bool
+}
+
 class ConfigSerializer {
     
     // MARK: - YAML Generation
@@ -45,6 +52,77 @@ class ConfigSerializer {
         // Convert to YAML
         return try Yams.dump(object: yamlDict, indent: 2, width: 120)
     }
+
+    // Generate YAML with a runtime-only telemetry overlay injected into service.telemetry
+    static func generateYAML(
+        from config: CollectorConfiguration,
+        overlayTelemetryFor collectorName: String,
+        settings: OverlaySettings
+    ) throws -> String {
+        // Start from canonical YAML map
+        var yamlDict: [String: Any] = [:]
+        if !config.receivers.isEmpty { yamlDict["receivers"] = try serializeComponents(config.receivers) }
+        if !config.processors.isEmpty { yamlDict["processors"] = try serializeComponents(config.processors) }
+        if !config.exporters.isEmpty { yamlDict["exporters"] = try serializeComponents(config.exporters) }
+        if !config.extensions.isEmpty { yamlDict["extensions"] = try serializeComponents(config.extensions) }
+        if !config.connectors.isEmpty { yamlDict["connectors"] = try serializeComponents(config.connectors) }
+        if !config.pipelines.isEmpty { yamlDict["service"] = ["pipelines": try serializePipelines(config.pipelines)] }
+
+        // Build telemetry overlay via typed model for clarity and validation
+        let exporterModel = OTLPTelemetryExporter(
+            endpoint: settings.grpcEndpoint,
+            insecure: true,
+            protocolName: "grpc",
+            headers: [TelemetryHeader(name: "collector-name", value: collectorName)]
+        )
+
+        var overlayModel = TelemetryOverlayModel(
+            traces: nil,
+            metrics: nil,
+            logs: nil
+        )
+
+        // exporter dictionary keyed by exporter type
+        let exporterDict: [String: Any] = ["otlp": exporterModel.asDictionary()]
+
+        if settings.tracesEnabled {
+            // processors -> [{ batch: { exporter: { otlp: {...} } } }]
+            let batchWithExporter: [String: Any] = [
+                "batch": ["exporter": exporterDict]
+            ]
+            overlayModel = TelemetryOverlayModel(
+                traces: TelemetryTraces(processors: [batchWithExporter]),
+                metrics: overlayModel.metrics,
+                logs: overlayModel.logs
+            )
+        }
+        if settings.metricsEnabled {
+            let periodicReader: [String: Any] = [
+                "periodic": ["exporter": exporterDict]
+            ]
+            overlayModel = TelemetryOverlayModel(
+                traces: overlayModel.traces,
+                metrics: TelemetryMetrics(level: "detailed", readers: [periodicReader]),
+                logs: overlayModel.logs
+            )
+        }
+        if settings.logsEnabled {
+            let batchWithExporter: [String: Any] = [
+                "batch": ["exporter": exporterDict]
+            ]
+            overlayModel = TelemetryOverlayModel(
+                traces: overlayModel.traces,
+                metrics: overlayModel.metrics,
+                logs: TelemetryLogs(processors: [batchWithExporter])
+            )
+        }
+
+        var service = (yamlDict["service"] as? [String: Any]) ?? [:]
+        service["telemetry"] = overlayModel.asDictionary()
+        yamlDict["service"] = service
+
+        return try Yams.dump(object: yamlDict, indent: 2, width: 120)
+    }
     
     private static func serializeComponents(_ components: [ComponentInstance]) throws -> [String: Any] {
         var result: [String: Any] = [:]
@@ -61,10 +139,24 @@ class ConfigSerializer {
         var result: [String: Any] = [:]
         
         for (key, value) in config {
-            result[key] = try serializeConfigValue(value)
+            let serialized = try serializeConfigValue(value)
+            // Support nested YAML keys using dot notation (e.g., protocols.http.endpoint)
+            let parts = key.split(separator: ".").map(String.init)
+            insertNested(into: &result, path: parts, value: serialized)
         }
         
         return result
+    }
+
+    private static func insertNested(into dict: inout [String: Any], path: [String], value: Any) {
+        guard let first = path.first else { return }
+        if path.count == 1 {
+            dict[first] = value
+            return
+        }
+        var child = dict[first] as? [String: Any] ?? [:]
+        insertNested(into: &child, path: Array(path.dropFirst()), value: value)
+        dict[first] = child
     }
     
     private static func serializeConfigValue(_ value: ConfigValue) throws -> Any {
@@ -193,8 +285,9 @@ class ConfigSerializer {
             // Parse component name (before any '/')
             let componentName = instanceName.components(separatedBy: "/").first ?? instanceName
             
-            // Find component definition
-            guard let definition = await database.component(name: componentName + type.rawValue, version: version) else {
+            // Find component definition by both name and expected type to avoid
+            // picking the wrong component when names overlap across types (e.g., "otlp").
+            guard let definition = await database.component(name: componentName, type: type, version: version) else {
                 // Skip unknown components for now
                 continue
             }
@@ -221,18 +314,31 @@ class ConfigSerializer {
     ) throws -> [String: ConfigValue] {
         
         var result: [String: ConfigValue] = [:]
-        
-        for (key, value) in config {
-            // Find the field definition
-            guard let field = definition.fields.first(where: { $0.yamlKey == key }) else {
-                // Skip unknown fields
-                continue
+        // Flatten nested dictionaries into dot paths so they can be matched to yamlKey
+        let flat = flatten(config)
+        for (key, value) in flat {
+            if let field = definition.fields.first(where: { $0.yamlKey == key }) {
+                result[key] = try parseConfigValue(value, expectedType: field.fieldType)
+            } else {
+                // Preserve unknown keys by inferring a reasonable ConfigValue.
+                result[key] = inferConfigValue(value)
             }
-            
-            result[key] = try parseConfigValue(value, expectedType: field.fieldType)
         }
-        
         return result
+    }
+
+    private static func flatten(_ dict: [String: Any], prefix: String = "") -> [String: Any] {
+        var out: [String: Any] = [:]
+        for (k, v) in dict {
+            let key = prefix.isEmpty ? k : "\(prefix).\(k)"
+            if let sub = v as? [String: Any] {
+                let nested = flatten(sub, prefix: key)
+                for (nk, nv) in nested { out[nk] = nv }
+            } else {
+                out[key] = v
+            }
+        }
+        return out
     }
     
     private static func parseConfigValue(_ value: Any, expectedType: ConfigFieldType) throws -> ConfigValue {
@@ -307,6 +413,25 @@ class ConfigSerializer {
         }
         
         // Return null for unparseable values
+        return .null
+    }
+
+    // Heuristic conversion used for keys missing from the bundled schema
+    private static func inferConfigValue(_ any: Any) -> ConfigValue {
+        if let s = any as? String { return .string(s) }
+        if let b = any as? Bool { return .bool(b) }
+        if let i = any as? Int { return .int(i) }
+        if let d = any as? Double { return .double(d) }
+        if let arrS = any as? [String] { return .stringArray(arrS) }
+        if let dictSS = any as? [String: String] { return .stringMap(dictSS) }
+        if let dict = any as? [String: Any] {
+            var out: [String: ConfigValue] = [:]
+            for (k, v) in dict { out[k] = inferConfigValue(v) }
+            return .map(out)
+        }
+        if let arr = any as? [Any] {
+            return .array(arr.map { inferConfigValue($0) })
+        }
         return .null
     }
     

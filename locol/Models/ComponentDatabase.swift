@@ -85,6 +85,7 @@ actor ComponentDatabase {
                     list[i].fields = try ConfigField.fetchAll(db, sql: "SELECT * FROM config_fields WHERE component_id = ? ORDER BY field_name", arguments: [id])
                     list[i].defaults = try DefaultValue.fetchAll(db, sql: "SELECT * FROM default_values WHERE component_id = ?", arguments: [id])
                     list[i].examples = try ConfigExample.fetchAll(db, sql: "SELECT * FROM config_examples WHERE component_id = ?", arguments: [id])
+                    list[i].constraints = try ComponentConstraint.fetchAll(db, sql: "SELECT * FROM component_constraints WHERE component_id = ?", arguments: [id])
                 }
                 return list
             }
@@ -102,6 +103,12 @@ actor ComponentDatabase {
     /// Get a specific component by name and version
     func component(name: String, version: String) -> ComponentDefinition? {
         return components(for: version).first { $0.name == name }
+    }
+
+    /// Get a specific component by name, type, and version.
+    /// Useful when the same short name exists across multiple types (e.g., "otlp").
+    func component(name: String, type: ComponentType, version: String) -> ComponentDefinition? {
+        return components(for: version).first { $0.name == name && $0.type == type }
     }
     
     /// Search components by name or description

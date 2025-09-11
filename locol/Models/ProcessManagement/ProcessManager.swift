@@ -22,8 +22,16 @@ class ProcessManager: ProcessManagementService {
     private let fileManager: CollectorFileManager
     @ObservationIgnored private var activeProcess: Process?
     private var activeCollectorInfo: (id: UUID, name: String)? = nil
+    /// Callback invoked when the active collector process terminates
+    var onCollectorTerminated: ((UUID) -> Void)? = nil
     
     private let logger = Logger.collectors
+    // STDERR capture
+    @ObservationIgnored private var stderrPipe: Pipe?
+    @ObservationIgnored private var stderrTask: Task<Void, Never>?
+    @ObservationIgnored private var stderrRemainder: String = ""
+    @ObservationIgnored private var stderrLines: [String] = []
+    private let stderrMaxLines = 200
     
     var activeCollectorId: UUID? {
         return activeCollectorInfo?.id
@@ -31,6 +39,38 @@ class ProcessManager: ProcessManagementService {
     
     init(fileManager: CollectorFileManager) {
         self.fileManager = fileManager
+    }
+    
+    // MARK: - STDERR helpers
+    private func appendStderr(_ chunk: String) {
+        let combined = stderrRemainder + chunk
+        var lines = combined.components(separatedBy: .newlines)
+        if let last = lines.last, !combined.hasSuffix("\n") {
+            stderrRemainder = last
+            lines.removeLast()
+        } else {
+            stderrRemainder = ""
+        }
+        if !lines.isEmpty {
+            stderrLines.append(contentsOf: lines)
+            if stderrLines.count > stderrMaxLines {
+                stderrLines.removeFirst(stderrLines.count - stderrMaxLines)
+            }
+        }
+    }
+    
+    private func appendStderrLine(_ line: String) {
+        guard !line.isEmpty else { return }
+        stderrLines.append(line)
+        if stderrLines.count > stderrMaxLines {
+            stderrLines.removeFirst(stderrLines.count - stderrMaxLines)
+        }
+    }
+    
+    func getRecentStderr(maxLines: Int = 50) -> String {
+        let count = min(maxLines, stderrLines.count)
+        guard count > 0 else { return "" }
+        return stderrLines.suffix(count).joined(separator: "\n")
     }
     
     func startCollector(_ collector: CollectorInstance) async throws {
@@ -68,11 +108,52 @@ class ProcessManager: ProcessManagementService {
         env["OTEL_RESOURCE_ATTRIBUTES"] = resourceAttributes
         process.environment = env
         
-        // Discard output
+        // Capture STDERR for diagnostics
+        let errPipe = Pipe()
+        self.stderrPipe = errPipe
+        self.stderrRemainder = ""
+        self.stderrLines.removeAll(keepingCapacity: true)
+        process.standardError = errPipe
+        // Prefer async line streaming over readability handler
+        stderrTask?.cancel()
+        stderrTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                for try await line in errPipe.fileHandleForReading.bytes.lines {
+                    await MainActor.run { [weak self] in
+                        self?.appendStderrLine(line)
+                    }
+                }
+            } catch {
+                await MainActor.run { [weak self] in
+                    self?.logger.error("stderr stream error: \(error.localizedDescription)")
+                }
+            }
+        }
+        
+        // Discard STDOUT
         process.standardOutput = nil
-        process.standardError = nil
         
         do {
+            // Observe termination to keep UI and store in sync
+            process.terminationHandler = { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    let id = self.activeCollectorInfo?.id
+                    self.activeProcess = nil
+                    self.activeCollectorInfo = nil
+                    // Stop capturing
+                    self.stderrTask?.cancel()
+                    self.stderrTask = nil
+                    self.stderrPipe = nil
+                    if let id { self.onCollectorTerminated?(id) }
+                    self.logger.notice("Collector \(collector.name) terminated with status: \(process.terminationStatus)")
+                    let tail = self.getRecentStderr(maxLines: 10)
+                    if !tail.isEmpty {
+                        self.logger.error("stderr tail for \(collector.name):\n\(tail)")
+                    }
+                }
+            }
             try process.run()
             activeProcess = process
             activeCollectorInfo = (id: collector.id, name: collector.name)
@@ -117,7 +198,7 @@ class ProcessManager: ProcessManagementService {
     }
     
     func isRunning(_ collector: CollectorInstance) -> Bool {
-        let running = activeProcess != nil && activeCollectorInfo?.id == collector.id
+        let running = (activeProcess?.isRunning == true) && activeCollectorInfo?.id == collector.id
         // Remove excessive logging that causes infinite loop during UI updates
         // logger.debug("Collector \(collector.name) running status: \(running)")
         return running

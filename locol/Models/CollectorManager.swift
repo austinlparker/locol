@@ -24,10 +24,10 @@ class CollectorManager {
     let fileManager: CollectorFileManager
     let releaseManager: ReleaseManager
     let downloadManager: DownloadManager
-    let appState: AppState
     let settings: OTLPReceiverSettings
     let storage: TelemetryStorageProtocol
     let processManager: ProcessManager
+    let collectorStore: CollectorStore?
     
     // Logger for error handling
     private let logger = Logger.app
@@ -36,26 +36,28 @@ class CollectorManager {
         fileManager: CollectorFileManager = CollectorFileManager(),
         releaseManager: ReleaseManager = ReleaseManager(),
         downloadManager: DownloadManager? = nil,
-        appState: AppState = AppState(),
         processManager: ProcessManager? = nil,
         settings: OTLPReceiverSettings = OTLPReceiverSettings(),
-        storage: TelemetryStorageProtocol = TelemetryStorage()
+        storage: TelemetryStorageProtocol = TelemetryStorage(),
+        collectorStore: CollectorStore? = nil
     ) {
         self.fileManager = fileManager
         self.releaseManager = releaseManager
         self.downloadManager = downloadManager ?? DownloadManager(fileManager: fileManager)
-        self.appState = appState
         self.processManager = processManager ?? ProcessManager(fileManager: fileManager)
         self.settings = settings
         self.storage = storage
-        
-        // Reset running state for all collectors on startup
-        for collector in appState.collectors where collector.isRunning {
-            var updatedCollector = collector
-            updatedCollector.isRunning = false
-            appState.updateCollector(updatedCollector)
+        self.collectorStore = collectorStore
+        // Hook process termination to clear state and update store
+        self.processManager.onCollectorTerminated = { [weak self] id in
+            guard let self else { return }
+            Task { @MainActor in
+                if self.activeCollector?.id == id {
+                    self.activeCollector = nil
+                }
+                try? await self.collectorStore?.markStopped(id)
+            }
         }
-        
         // Application termination cleanup will be handled by the app's lifecycle
     }
     
@@ -65,147 +67,72 @@ class CollectorManager {
         releaseManager.availableReleases
     }
     
-    var collectors: [CollectorInstance] {
-        appState.collectors
-    }
+    // No in-memory collector list; store is source of truth
     
-    // MARK: - Service Telemetry Injection
-    
-    private func injectServiceTelemetry(for collector: CollectorInstance) throws -> CollectorInstance {
-        // Read the current configuration
-        let configURL = URL(fileURLWithPath: collector.configPath)
-        let configContent = try String(contentsOf: configURL, encoding: .utf8)
-        
-        // Parse the YAML configuration
-        guard var config = try Yams.load(yaml: configContent) as? [String: Any] else {
-            throw NSError(domain: "io.aparker.locol", code: 1, userInfo: [
-                NSLocalizedDescriptionKey: "Failed to parse collector configuration"
-            ])
-        }
-        
-        // Get OTLP receiver settings
-        // Check if OTLP receiver is available (it auto-starts as a singleton)
+    // MARK: - Service Telemetry Materialization
+    private func buildRuntimeCollectorInstance(from record: CollectorRecord, id: UUID) async throws -> CollectorInstance {
         if #available(macOS 15.0, *) {
-            // Always inject telemetry - the receiver will auto-start if needed
-            logger.info("Injecting OTLP telemetry configuration")
-        } else {
-            logger.info("OTLP receiver not available on this macOS version, skipping telemetry injection")
-            return collector
+            logger.info("Materializing OTLP telemetry overlay for \(record.name)")
         }
-        
-        // Create service telemetry configuration
-        var serviceTelemetry: [String: Any] = [:]
-        
-        // Inject traces telemetry if enabled
-        if settings.tracesEnabled {
-            serviceTelemetry["traces"] = [
-                "processors": [
-                    [
-                        "batch": [
-                            "exporter": [
-                                "otlp": [
-                                    "protocol": "grpc",
-                                    "endpoint": settings.grpcEndpoint,
-                                    "headers": [
-                                        "collector-name": collector.name
-                                    ]
-                                ]
-                            ]
-                        ]
-                    ]
+        guard let (_, origConfig) = try await collectorStore?.getCurrentConfig(id) else {
+            throw ProcessError.configurationError("No current configuration for collector \(record.name)")
+        }
+        var typedConfig = origConfig
+        // Runtime validation: ensure OTLP receiver has at least one protocol
+        if let idx = typedConfig.receivers.firstIndex(where: { $0.instanceName.split(separator: "/").first == "otlp" }) {
+            var inst = typedConfig.receivers[idx]
+            let hasProtocols: Bool
+            if case let .map(protoMap)? = inst.configuration["protocols"] {
+                hasProtocols = !protoMap.isEmpty
+            } else {
+                hasProtocols = false
+            }
+            if !hasProtocols {
+                let proto: [String: ConfigValue] = [
+                    "grpc": .map([:]),
+                    "http": .map([:])
                 ]
-            ]
+                inst.configuration["protocols"] = .map(proto)
+                typedConfig.receivers[idx] = inst
+            }
         }
-        
-        // Inject metrics telemetry if enabled
-        if settings.metricsEnabled {
-            serviceTelemetry["metrics"] = [
-                "level": "detailed",
-                "readers": [
-                    [
-                        "periodic": [
-                            "exporter": [
-                                "otlp": [
-                                    "protocol": "grpc",
-                                    "endpoint": settings.grpcEndpoint,
-                                    "headers": [
-                                        "collector-name": collector.name
-                                    ]
-                                ]
-                            ]
-                        ]
-                    ]
-                ]
-            ]
-        }
-        
-        // Inject logs telemetry if enabled
-        if settings.logsEnabled {
-            serviceTelemetry["logs"] = [
-                "processors": [
-                    [
-                        "batch": [
-                            "exporter": [
-                                "otlp": [
-                                    "protocol": "grpc",
-                                    "endpoint": settings.grpcEndpoint,
-                                    "headers": [
-                                        "collector-name": collector.name
-                                    ]
-                                ]
-                            ]
-                        ]
-                    ]
-                ]
-            ]
-        }
-        
-        // Inject the service telemetry into the configuration
-        if var service = config["service"] as? [String: Any] {
-            service["telemetry"] = serviceTelemetry
-            config["service"] = service
-        } else {
-            config["service"] = [
-                "telemetry": serviceTelemetry
-            ]
-        }
-        
-        // Write the updated configuration to a temporary file
-        let modifiedConfigContent = try Yams.dump(object: config)
-        let tempConfigURL = configURL.appendingPathExtension("locol-temp")
-        try modifiedConfigContent.write(to: tempConfigURL, atomically: true, encoding: .utf8)
-        
-        logger.info("Injected service telemetry configuration for collector \(collector.name)")
-        
-        // Return a new collector instance with the temp config path
+        let overlay = OverlaySettings(
+            grpcEndpoint: settings.grpcEndpoint,
+            tracesEnabled: settings.tracesEnabled,
+            metricsEnabled: settings.metricsEnabled,
+            logsEnabled: settings.logsEnabled
+        )
+        let runtimeYAML = try ConfigSerializer.generateYAML(from: typedConfig, overlayTelemetryFor: record.name, settings: overlay)
+        // Write to ~/.locol/collectors/<name>/config.runtime.yaml
+        let baseDir = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".locol/collectors/\(record.name)")
+        try FileManager.default.createDirectory(at: baseDir, withIntermediateDirectories: true)
+        let tempConfigURL = baseDir.appendingPathComponent("config.runtime.yaml")
+        try runtimeYAML.write(to: tempConfigURL, atomically: true, encoding: .utf8)
         return CollectorInstance(
-            id: collector.id,
-            name: collector.name,
-            version: collector.version,
-            binaryPath: collector.binaryPath,
+            id: id,
+            name: record.name,
+            version: record.version,
+            binaryPath: record.binaryPath,
             configPath: tempConfigURL.path,
-            commandLineFlags: collector.commandLineFlags,
-            isRunning: collector.isRunning,
-            pid: collector.pid,
-            startTime: collector.startTime,
-            components: collector.components
+            commandLineFlags: record.flags,
+            isRunning: record.isRunning,
+            pid: nil,
+            startTime: nil,
+            components: nil
         )
     }
     
     private func cleanupTempConfig(for collector: CollectorInstance) {
-        // The temp config path might be the current config path if telemetry was injected
         let configURL = URL(fileURLWithPath: collector.configPath)
-        
-        // Check if the current config path is a temp file
-        if configURL.pathExtension == "locol-temp" {
+        // Clean up files with ".runtime" extension
+        if configURL.pathExtension == "runtime" {
             try? FileManager.default.removeItem(at: configURL)
-            logger.debug("Cleaned up temporary configuration file for collector \(collector.name)")
+            logger.debug("Cleaned up runtime configuration for collector \(collector.name)")
         } else {
-            // Also check for a temp file based on the original path
-            let tempConfigURL = configURL.appendingPathExtension("locol-temp")
-            if FileManager.default.fileExists(atPath: tempConfigURL.path) {
-                try? FileManager.default.removeItem(at: tempConfigURL)
-                logger.debug("Cleaned up temporary configuration file for collector \(collector.name)")
+            let runtimeURL = configURL.appendingPathExtension("runtime")
+            if FileManager.default.fileExists(atPath: runtimeURL.path) {
+                try? FileManager.default.removeItem(at: runtimeURL)
+                logger.debug("Cleaned up runtime configuration for collector \(collector.name)")
             }
         }
     }
@@ -256,31 +183,27 @@ class CollectorManager {
             
             progressTask.cancel()
             
-            let collector = CollectorInstance(
-                name: name,
-                version: version,
-                binaryPath: downloadedBinaryPath,
-                configPath: downloadedConfigPath
-            )
-            appState.addCollector(collector)
-            
-            // Get component information
-            do {
-                downloadStatus = "Getting component information..."
-                let components = try await processManager.getCollectorComponents(collector)
-                
-                var updatedCollector = collector
-                updatedCollector.components = components
-                appState.updateCollector(updatedCollector)
-                isDownloading = false
-                downloadProgress = 0.0
-                downloadStatus = ""
-            } catch {
-                handleError(error, context: "Failed to get collector components")
-                isDownloading = false
-                downloadProgress = 0.0
-                downloadStatus = ""
+            // Persist to store
+            if let store = collectorStore {
+                Task {
+                    do {
+                        let yaml = try String(contentsOfFile: downloadedConfigPath, encoding: .utf8)
+                        let typed = try await ConfigSerializer.parseYAML(yaml, version: version)
+                        _ = try await store.createCollector(
+                            id: UUID(),
+                            name: name,
+                            version: version,
+                            binaryPath: downloadedBinaryPath,
+                            defaultConfig: typed
+                        )
+                    } catch {
+                        self.logger.error("Failed to persist collector to store: \(error.localizedDescription)")
+                    }
+                }
             }
+            isDownloading = false
+            downloadProgress = 0.0
+            downloadStatus = ""
         } catch {
             handleError(error, context: "Failed to create collector directory or download collector")
             isDownloading = false
@@ -293,55 +216,59 @@ class CollectorManager {
 
     
     func removeCollector(withId id: UUID) {
-        guard let collector = appState.getCollector(withId: id) else { return }
-        
         // If this is the active collector, stop it first
         if activeCollector?.id == id {
             stopCollector(withId: id)
         }
-        
-        appState.removeCollector(withId: id)
-        
-        do {
-            try fileManager.deleteCollector(name: collector.name)
-        } catch {
-            handleError(error, context: "Failed to delete collector")
-        }
-        
-        // Clean up telemetry data for this collector
-        if #available(macOS 15.0, *) {
-            Task {
-                try await storage.clearData(for: collector.name)
-                await MainActor.run {
-                    logger.info("Removed telemetry data for collector: \(collector.name)")
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let record = try await self.collectorStore?.getCollector(id)
+                if let name = record?.name {
+                    try? self.fileManager.deleteCollector(name: name)
+                    if #available(macOS 15.0, *) {
+                        try await self.storage.clearData(for: name)
+                        self.logger.info("Removed telemetry data for collector: \(name)")
+                    }
                 }
+                try await self.collectorStore?.deleteCollector(id)
+            } catch {
+                self.handleError(error, context: "Failed to remove collector")
             }
         }
     }
     
     func startCollector(withId id: UUID) {
-        guard let collector = appState.getCollector(withId: id) else { return }
-        
+        // Avoid duplicate starts for the same collector
+        if processManager.activeCollectorId == id || isProcessingOperation {
+            logger.debug("Start requested for already running or processing collector: \(id)")
+            return
+        }
         // Show processing status
         isProcessingOperation = true
         
         // Use Task for async operation
         Task {
             do {
-                // Inject service telemetry configuration before starting
-                let collectorWithTelemetry = try injectServiceTelemetry(for: collector)
+                guard let record = try await collectorStore?.getCollector(id) else {
+                    throw ProcessError.configurationError("Collector not found")
+                }
+                let collectorWithTelemetry = try await buildRuntimeCollectorInstance(from: record, id: id)
                 
                 // Start collector with async/await
                 try await processManager.startCollector(collectorWithTelemetry)
                 
                 // Update collector state
-                var updatedCollector = collector
-                updatedCollector.isRunning = true
-                updatedCollector.pid = 0  // PID not available with new swift-subprocess API
-                updatedCollector.startTime = Date()
-                appState.updateCollector(updatedCollector)
-                activeCollector = updatedCollector
+                var running = collectorWithTelemetry
+                running.isRunning = true
+                running.pid = 0
+                running.startTime = Date()
+                activeCollector = running
                 isProcessingOperation = false
+                // Persist running state
+                if let store = collectorStore {
+                    try? await store.markRunning(id, start: running.startTime ?? Date())
+                }
                 
                 // Metrics scraping disabled - we now get metrics via OTLP telemetry
                 // Task {
@@ -356,8 +283,6 @@ class CollectorManager {
     }
     
     func stopCollector(withId id: UUID) {
-        guard let collector = appState.getCollector(withId: id) else { return }
-        
         // Show processing status
         isProcessingOperation = true
         
@@ -371,25 +296,21 @@ class CollectorManager {
                 try await processManager.stopCollector()
                 
                 // Clean up temporary configuration file if it exists
-                cleanupTempConfig(for: collector)
+                if let active = activeCollector { cleanupTempConfig(for: active) }
                 
                 // Update collector state
-                var updatedCollector = collector
-                updatedCollector.isRunning = false
-                updatedCollector.pid = nil
-                updatedCollector.startTime = nil
-                appState.updateCollector(updatedCollector)
                 activeCollector = nil
                 isProcessingOperation = false
+                if let store = collectorStore {
+                    try? await store.markStopped(id)
+                }
             } catch ProcessError.notRunning {
                 // If the process isn't running, just update the state
-                var updatedCollector = collector
-                updatedCollector.isRunning = false
-                updatedCollector.pid = nil
-                updatedCollector.startTime = nil
-                appState.updateCollector(updatedCollector)
                 activeCollector = nil
                 isProcessingOperation = false
+                if let store = collectorStore {
+                    try? await store.markStopped(id)
+                }
             } catch {
                 handleError(error, context: "Failed to stop collector")
                 isProcessingOperation = false
@@ -398,26 +319,15 @@ class CollectorManager {
     }
     
     func isCollectorRunning(withId id: UUID) -> Bool {
-        guard let collector = appState.getCollector(withId: id) else { return false }
-        return processManager.isRunning(collector)
+        return activeCollector?.id == id && processManager.activeCollectorId == id
     }
     
     func updateCollectorConfig(withId id: UUID, config: String) {
-        guard let collector = appState.getCollector(withId: id) else { return }
-        
-        do {
-            try fileManager.writeConfig(config, to: collector.configPath)
-        } catch {
-            handleError(error, context: "Failed to write config")
-        }
+        logger.notice("updateCollectorConfig called; prefer saving typed config to CollectorStore")
     }
     
     func updateCollectorFlags(withId id: UUID, flags: String) {
-        guard let collector = appState.getCollector(withId: id) else { return }
-        
-        var updatedCollector = collector
-        updatedCollector.commandLineFlags = flags
-        appState.updateCollector(updatedCollector)
+        Task { try? await collectorStore?.updateFlags(id, flags: flags) }
     }
     
     func getCollectorReleases(repo: String, forceRefresh: Bool = false) async {
@@ -438,24 +348,25 @@ class CollectorManager {
     }
     
     func applyConfigTemplate(named templateName: String, toCollectorWithId id: UUID) {
-        guard let collector = collectors.first(where: { $0.id == id }) else { return }
-        
-        do {
-            try fileManager.applyConfigTemplate(named: templateName, to: collector.configPath)
-        } catch {
-            handleError(error, context: "Failed to apply template")
+        Task { [weak self] in
+            guard let self else { return }
+            guard let record = try? await self.collectorStore?.getCollector(id) else { return }
+            let configPath = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".locol/collectors/\(record.name)/config.yaml").path
+            do {
+                try self.fileManager.applyConfigTemplate(named: templateName, to: configPath)
+            } catch {
+                self.handleError(error, context: "Failed to apply template")
+            }
         }
     }
     
     
     func refreshCollectorComponents(withId id: UUID) async throws {
-        guard let collector = appState.getCollector(withId: id) else { return }
-        
-        let components = try await processManager.getCollectorComponents(collector)
-        
-        var updatedCollector = collector
-        updatedCollector.components = components
-        appState.updateCollector(updatedCollector)
+        guard let record = try await collectorStore?.getCollector(id) else { return }
+        // Build a minimal instance for calling processManager (config path not used)
+        let instance = CollectorInstance(id: id, name: record.name, version: record.version, binaryPath: record.binaryPath, configPath: "")
+        _ = try await processManager.getCollectorComponents(instance)
     }
     
     // MARK: - Lifecycle Management
@@ -464,16 +375,12 @@ class CollectorManager {
     func cleanupOnTermination() async {
         logger.info("Application terminating, stopping all collectors")
         
-        // Copy collectors to avoid potential mutation during iteration
-        let collectorsToStop = collectors.filter { $0.isRunning }
-        
-        // Stop all running collectors
-        for collector in collectorsToStop {
+        // Stop active collector if present
+        if activeCollector != nil {
             do {
                 try await processManager.stopCollector()
-                logger.info("Successfully stopped collector: \(collector.name)")
             } catch {
-                logger.error("Failed to stop collector \(collector.name): \(error.localizedDescription)")
+                logger.error("Failed to stop active collector: \(error.localizedDescription)")
             }
         }
         

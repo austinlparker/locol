@@ -21,10 +21,7 @@ struct PipelineDesignerView: View {
         self.collectorId = collectorId
     }
     
-    private var collector: CollectorInstance? {
-        guard let collectorId = collectorId else { return nil }
-        return container.collectorManager.collectors.first { $0.id == collectorId }
-    }
+    // Collector details are loaded via store in AppContainer; we don't rely on AppState here.
     
     var body: some View {
         HSplitView {
@@ -54,7 +51,7 @@ struct PipelineDesignerView: View {
             ToolbarItemGroup(placement: .secondaryAction) {
                 if collectorId != nil {
                     Button("Save") {
-                        saveToCollector()
+                        Task { await saveToCollector() }
                     }
                     .keyboardShortcut("s", modifiers: .command)
                 }
@@ -552,14 +549,13 @@ struct PipelineDesignerView: View {
         }
     }
     
-    private func saveToCollector() {
-        guard let collector = collector else { return }
-        
+    private func saveToCollector() async {
+        guard let collectorId else { return }
         do {
-            let yaml = try ConfigSerializer.generateYAML(from: container.pipelineConfig)
-            try yaml.write(toFile: collector.configPath, atomically: true, encoding: .utf8)
+            let versionId = try await container.collectorStore.saveConfigVersion(collectorId, config: container.pipelineConfig, autosave: false)
+            try await container.collectorStore.setCurrentConfig(collectorId, versionId: versionId)
         } catch {
-            print("Failed to save to collector: \(error)")
+            print("Failed to save config to store: \(error)")
         }
     }
     
@@ -593,8 +589,8 @@ struct PipelineDesignerView: View {
     // MARK: - Configuration Loading
     
     private func loadCollectorConfiguration() async {
-        guard let collector = collector else { return }
-        await container.loadCollectorConfiguration(for: collector)
+        guard let collectorId else { return }
+        await container.loadCollectorConfiguration(forCollectorId: collectorId)
     }
 
     private func loadAvailableVersions() async {
@@ -621,12 +617,31 @@ struct PipelineDesignerView: View {
         let existingNames: Set<String> = Set(container.pipelineConfig.allComponents.map { $0.instanceName })
         let base = definition.name
         var candidate = base
-        var i = 2
-        while existingNames.contains(candidate) {
-            candidate = "\(base)/\(i)"
-            i += 1
+        if existingNames.contains(candidate) {
+            // Try random slug for suffix; fall back to numeric if needed
+            var attempts = 0
+            while attempts < 10 {
+                let slug = randomSlug()
+                let c = "\(base)/\(slug)"
+                if !existingNames.contains(c) { candidate = c; break }
+                attempts += 1
+            }
+            if attempts >= 10 {
+                var i = 2
+                while existingNames.contains(candidate) {
+                    candidate = "\(base)/\(i)"
+                    i += 1
+                }
+            }
         }
-        let instance = ComponentInstance(definition: definition, instanceName: candidate)
+        var instance = ComponentInstance(definition: definition, instanceName: candidate)
+        // Seed minimal-valid config if there is an anyOf/oneOf constraint and none of the keys are present
+        if let group = definition.constraints.first(where: { $0.kind == "anyOf" || $0.kind == "oneOf" }) {
+            let hasAny = group.keys.contains(where: { k in instance.configuration[k] != nil })
+            if !hasAny, let firstKey = group.keys.first {
+                instance.configuration[firstKey] = .map([:])
+            }
+        }
         // Ensure it exists in top-level components for YAML export
         switch definition.type {
         case .receiver:
@@ -651,6 +666,41 @@ struct PipelineDesignerView: View {
             }
         }
         return instance
+    }
+
+    private func randomSlug() -> String {
+        // Culture ship–style playful slugs; all lowercase, kebab-case
+        func pick<T>(_ a: [T]) -> T { a.randomElement()! }
+        
+        let concepts = [
+            "subtlety","gravitas","patience","restraint","perspective","tact","nuance","decorum","serenity","focus","finesse","composure","charisma","mercy","parsimony","style","grace"
+        ]
+        let intensifiers = ["very","extremely","rather","somewhat","marginally","barely","mostly","distinctly","excessively","insufficiently"]
+        let modifiers = ["little","considerable","unexpected","questionable","diminished","augmented","measured","applied","weaponized","unreasonable","faint","noticeable","casual"]
+        let codas = ["indeed","perhaps","really","honestly","allegedly","apparently","as-requested"]
+        let verbs = ["testing","overthinking","improvising","insinuating","negotiating","procrastinating","iterating","refactoring","pontificating","handwaving","guessing","suboptimizing","celebrating"]
+        let polite = ["we","i","one","the-committee"]
+        let aims = ["aim-to-please","try-harder","do-our-best","mean-well","clean-up-later","regret-this"]
+        let classics = [
+            "so-much-for-subtlety","just-testing","killing-time","very-little-gravitas-indeed","frank-exchange-of-views","hand-me-the-gun","youll-thank-me-later","just-read-the-docs","absolutely-not-my-fault"
+        ]
+        
+        enum Pattern: CaseIterable { case classic, soMuchFor, intensifier, gerund, polite }
+        let pattern = Pattern.allCases.randomElement()!
+        let slug: String
+        switch pattern {
+        case .classic:
+            slug = pick(classics)
+        case .soMuchFor:
+            slug = "so-much-for-" + pick(concepts)
+        case .intensifier:
+            slug = [pick(intensifiers), pick(modifiers), pick(concepts), pick(codas)].joined(separator: "-")
+        case .gerund:
+            slug = "just-" + pick(verbs)
+        case .polite:
+            slug = pick(polite) + "-" + pick(aims)
+        }
+        return slug.replacingOccurrences(of: "--", with: "-")
     }
 }
 
@@ -730,9 +780,17 @@ struct ComponentRowView: View {
             Spacer()
             
             if !component.configuration.isEmpty {
-                Image(systemName: "gearshape.fill")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Button {
+                    // Make the cog actionable: select and focus this component
+                    selectedComponent = component
+                } label: {
+                    Image(systemName: "gearshape.fill")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Open configuration for this component")
+                .accessibilityLabel("Open configuration")
             }
         }
         .contentShape(Rectangle())

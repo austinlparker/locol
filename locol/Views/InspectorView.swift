@@ -38,10 +38,7 @@ struct InspectorView: View {
 struct CollectorInspector: View {
     let collectorId: UUID
     @Environment(AppContainer.self) private var container
-    
-    var collector: CollectorInstance? {
-        container.collectorManager.collectors.first { $0.id == collectorId }
-    }
+    @State private var record: CollectorRecord? = nil
     
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -57,21 +54,21 @@ struct CollectorInspector: View {
                 }
                 Divider()
             }
-            if let collector = collector {
+            if let record = record {
                 // Quick Actions
                 Section {
                     VStack(spacing: 8) {
                         Button(action: { toggleCollectorState() }) {
                             Label(
-                                collector.isRunning ? "Stop Collector" : "Start Collector",
-                                systemImage: collector.isRunning ? "stop.fill" : "play.fill"
+                                isRunning ? "Stop Collector" : "Start Collector",
+                                systemImage: isRunning ? "stop.fill" : "play.fill"
                             )
                             .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
                         
-                        if collector.isRunning {
+                        if isRunning {
                             Button(action: { restartCollector() }) {
                                 Label("Restart", systemImage: "arrow.clockwise")
                                     .frame(maxWidth: .infinity)
@@ -91,14 +88,15 @@ struct CollectorInspector: View {
                         LabeledContent("Status") {
                             HStack {
                                 Circle()
-                                    .fill(collector.isRunning ? .green : .gray)
+                                    .fill(isRunning ? .green : .gray)
                                     .frame(width: 8, height: 8)
-                                Text(collector.isRunning ? "Running" : "Stopped")
+                                Text(isRunning ? "Running" : "Stopped")
                                     .font(.caption)
                             }
                         }
                         
-                        if let startTime = collector.startTime {
+                        if container.collectorManager.activeCollector?.id == collectorId,
+                           let startTime = container.collectorManager.activeCollector?.startTime {
                             LabeledContent("Uptime") {
                                 Text(startTime.formatted(.relative(presentation: .named)))
                                     .font(.caption)
@@ -107,13 +105,13 @@ struct CollectorInspector: View {
                         }
                         
                         LabeledContent("Version") {
-                            Text(collector.version)
+                            Text(record.version)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
                         
                         if container.collectorManager.isProcessingOperation && 
-                           container.collectorManager.activeCollector?.id == collector.id {
+                           container.collectorManager.activeCollector?.id == collectorId {
                             LabeledContent("Operation") {
                                 HStack {
                                     ProgressView()
@@ -134,35 +132,18 @@ struct CollectorInspector: View {
                 // Configuration Info
                 Section {
                     VStack(alignment: .leading, spacing: 8) {
-                        LabeledContent("Config Path") {
-                            Text(URL(fileURLWithPath: collector.configPath).lastPathComponent)
+                        LabeledContent("Binary") {
+                            Text(record.binaryPath)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                                .lineLimit(2)
                         }
-                        
-                        if !collector.commandLineFlags.isEmpty {
-                            LabeledContent("Flags") {
-                                Text(collector.commandLineFlags)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .lineLimit(2)
-                            }
-                        }
-                        
-                        if let components = collector.components {
-                            LabeledContent("Components") {
-                                VStack(alignment: .trailing, spacing: 2) {
-                                    Text("\(components.receivers?.count ?? 0) receivers")
-                                        .font(.caption2)
-                                    Text("\(components.processors?.count ?? 0) processors")
-                                        .font(.caption2)
-                                    Text("\(components.exporters?.count ?? 0) exporters")
-                                        .font(.caption2)
-                                }
+                        LabeledContent("Data Directory") {
+                            Text(FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".locol/collectors/\(record.name)").path)
+                                .font(.caption)
                                 .foregroundStyle(.secondary)
-                            }
+                                .lineLimit(2)
                         }
-                        
                     }
                 } header: {
                     InspectorSectionHeader("CONFIGURATION")
@@ -170,36 +151,12 @@ struct CollectorInspector: View {
                 
                 Divider()
                 
-                // Components Section
-                if let components = collector.components {
-                    Section {
-                        VStack(alignment: .leading, spacing: 12) {
-                            // Receivers
-                            if let receivers = components.receivers, !receivers.isEmpty {
-                                ComponentInspectorSection(title: "Receivers", items: receivers.map(\.name), icon: "antenna.radiowaves.left.and.right")
-                            }
-                            
-                            // Processors  
-                            if let processors = components.processors, !processors.isEmpty {
-                                ComponentInspectorSection(title: "Processors", items: processors.map(\.name), icon: "gear")
-                            }
-                            
-                            // Exporters
-                            if let exporters = components.exporters, !exporters.isEmpty {
-                                ComponentInspectorSection(title: "Exporters", items: exporters.map(\.name), icon: "square.and.arrow.up")
-                            }
-                        }
-                    } header: {
-                        InspectorSectionHeader("COMPONENTS")
-                    }
-                    
-                    Divider()
-                }
+                // Components Section omitted until store-backed snapshot is available.
                 
                 // Command Line Flags Section
-                if !collector.commandLineFlags.isEmpty {
+                if !(record.flags.isEmpty) {
                     Section {
-                        Text(collector.commandLineFlags)
+                        Text(record.flags)
                             .font(.system(.caption, design: .monospaced))
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
@@ -213,27 +170,36 @@ struct CollectorInspector: View {
                     .foregroundStyle(.secondary)
             }
         }
+        .task {
+            if record == nil {
+                record = try? await container.collectorStore.getCollector(collectorId)
+            }
+        }
     }
     
     private func toggleCollectorState() {
-        guard let collector = collector else { return }
-        if collector.isRunning {
-            container.collectorManager.stopCollector(withId: collector.id)
+        if isRunning {
+            container.collectorManager.stopCollector(withId: collectorId)
         } else {
-            container.collectorManager.startCollector(withId: collector.id)
+            container.collectorManager.startCollector(withId: collectorId)
         }
     }
     
     private func restartCollector() {
-        guard let collector = collector else { return }
-        container.collectorManager.stopCollector(withId: collector.id)
+        container.collectorManager.stopCollector(withId: collectorId)
         // Add a small delay then restart
         Task {
             try await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
             await MainActor.run {
-                container.collectorManager.startCollector(withId: collector.id)
+                container.collectorManager.startCollector(withId: collectorId)
             }
         }
+    }
+
+    private var isRunning: Bool {
+        // Prefer process state; fall back to DB record state
+        if container.collectorManager.isCollectorRunning(withId: collectorId) { return true }
+        return record?.isRunning ?? false
     }
 
     // MARK: - Pipeline editing helpers
@@ -287,9 +253,9 @@ struct CollectorInspector: View {
             }
         }
         // If not found, avoid crashing — provide a transient binding to a copy
-        var copy = component
+        let tmp = component
         return Binding(
-            get: { copy },
+            get: { tmp },
             set: { _ in }
         )
     }

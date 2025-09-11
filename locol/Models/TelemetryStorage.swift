@@ -114,7 +114,44 @@ actor TelemetryStorage: TelemetryStorageProtocol {
             try db.create(index: "idx_logs_severity_time", on: "logs", columns: ["severity_number", "timestamp_nanos"])
         }
         
+        // Migration 2: Collectors and versioned configurations
+        migrator.registerMigration("v2_collectors_and_configs") { db in
+            // Collectors table
+            try db.create(table: "collectors") { t in
+                t.column("id", .text).primaryKey() // UUID string
+                t.column("name", .text).notNull().unique()
+                t.column("version", .text).notNull()
+                t.column("binary_path", .text).notNull()
+                t.column("command_line_flags", .text).notNull().defaults(to: "")
+                t.column("is_running", .integer).notNull().defaults(to: 0)
+                t.column("start_time_nanos", .integer)
+                t.column("last_state_change_nanos", .integer)
+                t.column("current_config_id", .text)
+            }
+            try db.create(index: "idx_collectors_name", on: "collectors", columns: ["name"], unique: true)
+            try db.create(index: "idx_collectors_is_running", on: "collectors", columns: ["is_running"]) 
+
+            // Config versions table
+            try db.create(table: "config_versions") { t in
+                t.column("id", .text).primaryKey() // UUID string
+                t.column("collector_id", .text).notNull()
+                t.column("rev", .integer).notNull()
+                t.column("created_at", .datetime).notNull().defaults(to: Date())
+                t.column("config_json", .blob).notNull()
+                t.column("yaml", .text)
+                t.column("is_valid", .integer).notNull().defaults(to: 1)
+                t.column("autosave", .integer).notNull().defaults(to: 0)
+            }
+            try db.create(index: "idx_cfg_rev", on: "config_versions", columns: ["collector_id", "rev"], unique: true)
+            try db.create(index: "idx_cfg_collector_id", on: "config_versions", columns: ["collector_id"]) 
+        }
+        
         return migrator
+    }
+
+    // Expose migrations so other stores using the same DB can stay in sync
+    static func runMigrations(on dbQueue: DatabaseQueue) throws {
+        try migrator.migrate(dbQueue)
     }
     
     // MARK: - Data Operations

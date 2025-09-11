@@ -25,12 +25,9 @@ struct TelemetryView: View {
         }
         .navigationTitle("Telemetry")
         .task {
-            // Set initial collector selection
-            if let collectorManager = collectorManager {
-                let runningCollector = collectorManager.collectors.first(where: { $0.isRunning })?.name
-                let firstCollector = collectorManager.collectors.first?.name
-                viewer.selectedCollector = runningCollector ?? firstCollector ?? "all"
-            }
+            // Set initial collector selection based on available stats
+            let first = viewer.collectorStats.first?.collectorName
+            viewer.selectedCollector = first ?? "all"
         }
     }
     

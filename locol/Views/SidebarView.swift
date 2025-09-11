@@ -14,7 +14,7 @@ struct SidebarView: View {
             List(selection: $selection) {
             // COLLECTORS SECTION
             Section {
-                if container.collectorManager.collectors.isEmpty {
+                if container.collectorsViewModel.items.isEmpty {
                     // Empty state
                     HStack {
                         Image(systemName: "server.rack")
@@ -26,12 +26,12 @@ struct SidebarView: View {
                     .font(.caption)
                     .padding(.vertical, 4)
                 } else {
-                    ForEach(container.collectorManager.collectors) { collector in
+                    ForEach(container.collectorsViewModel.items, id: \.id) { summary in
                         Label {
                             HStack {
-                                Text(collector.name)
+                                Text(summary.name)
                                 Spacer()
-                                if collector.isRunning {
+                                if summary.isRunning {
                                     Circle()
                                         .fill(.green)
                                         .frame(width: 6, height: 6)
@@ -39,18 +39,18 @@ struct SidebarView: View {
                             }
                         } icon: {
                             Image(systemName: "server.rack")
-                                .foregroundStyle(collector.isRunning ? .green : .primary)
+                                .foregroundStyle(summary.isRunning ? .green : .primary)
                         }
-                        .tag(SidebarItem.collector(collector.id))
+                        .tag(SidebarItem.collector(summary.id))
                         .contextMenu {
-                            Button(collector.isRunning ? "Stop Collector" : "Start Collector") {
-                                toggleCollector(collector)
+                            Button(summary.isRunning ? "Stop Collector" : "Start Collector") {
+                                toggleCollector(summary)
                             }
                             
                             Divider()
                             
                             Button("Delete Collector", role: .destructive) {
-                                deleteCollector(collector)
+                                deleteCollector(summary)
                             }
                         }
                     }
@@ -103,17 +103,17 @@ struct SidebarView: View {
     
     // MARK: - Helper Methods
     
-    private func toggleCollector(_ collector: CollectorInstance) {
-        if collector.isRunning {
-            container.collectorManager.stopCollector(withId: collector.id)
+    private func toggleCollector(_ summary: CollectorSummary) {
+        if summary.isRunning {
+            container.collectorManager.stopCollector(withId: summary.id)
         } else {
-            container.collectorManager.startCollector(withId: collector.id)
+            container.collectorManager.startCollector(withId: summary.id)
         }
     }
     
-    private func deleteCollector(_ collector: CollectorInstance) {
-        container.collectorManager.removeCollector(withId: collector.id)
-        if case .collector(let id) = selection, id == collector.id {
+    private func deleteCollector(_ summary: CollectorSummary) {
+        container.collectorManager.removeCollector(withId: summary.id)
+        if case .collector(let sel) = selection, sel == summary.id {
             selection = nil
         }
     }
