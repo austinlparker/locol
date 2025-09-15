@@ -1,28 +1,29 @@
 import SwiftUI
+import GRDBQuery
 
 struct InspectorView: View {
     let item: SidebarItem?
     @Environment(AppContainer.self) private var container
-    
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 switch item {
                 case .collector(let id):
                     CollectorInspector(collectorId: id)
-                    
+
                 case .otlpReceiver:
                     OTLPReceiverInspector()
-                    
+
                 case .telemetryViewer:
                     TelemetryInspector()
-                    
+
                 case .dataGenerator:
                     DataGeneratorInspector()
-                    
+
                 case .sqlQuery:
                     SQLQueryInspector()
-                    
+
                 case nil:
                     EmptyInspector()
                 }
@@ -38,425 +39,290 @@ struct InspectorView: View {
 struct CollectorInspector: View {
     let collectorId: UUID
     @Environment(AppContainer.self) private var container
-    @State private var record: CollectorRecord? = nil
-    
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             // Component editor for Pipeline Designer selection
             if let selected = container.selectedPipelineComponent {
                 Section {
-                    ComponentInspectorView(
-                        component: binding(for: selected),
-                        onConfigChanged: { updated in updateComponent(updated) }
-                    )
+                    VStack(alignment: .leading) {
+                        Text("Component: \(selected.name)")
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                        Text("Type: \(selected.component.type.displayName)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text("Component configuration editing is under development")
+                            .foregroundColor(.secondary)
+                            .italic()
+                    }
                 } header: {
                     InspectorSectionHeader("COMPONENT")
                 }
                 Divider()
             }
-            if let record = record {
-                // Quick Actions
-                Section {
-                    VStack(spacing: 8) {
-                        Button(action: { toggleCollectorState() }) {
-                            Label(
-                                isRunning ? "Stop Collector" : "Start Collector",
-                                systemImage: isRunning ? "stop.fill" : "play.fill"
-                            )
-                            .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.large)
-                        
-                        if isRunning {
-                            Button(action: { restartCollector() }) {
-                                Label("Restart", systemImage: "arrow.clockwise")
-                                    .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(.bordered)
-                        }
+
+            // Component Library
+            ComponentLibraryView()
+        }
+    }
+
+}
+
+// MARK: - Component Library View
+
+struct ComponentLibraryView: View {
+    @Environment(AppContainer.self) private var container
+    @Environment(\.databaseContext) private var databaseContext
+    @Query(ComponentsRequest()) private var allComponents: [CollectorComponent]
+    @State private var searchText = ""
+    @State private var selectedType: ComponentType? = nil
+
+    private var filteredComponents: [CollectorComponent] {
+        let typeFiltered = selectedType == nil ? allComponents : allComponents.filter { $0.type == selectedType }
+        return searchText.isEmpty ? typeFiltered : typeFiltered.filter { component in
+            component.name.localizedCaseInsensitiveContains(searchText) ||
+            component.description?.localizedCaseInsensitiveContains(searchText) == true
+        }
+    }
+
+    private var componentsByType: [(ComponentType, [CollectorComponent])] {
+        let types: [ComponentType] = [.receiver, .processor, .exporter, .extension, .connector]
+        return types.compactMap { type in
+            let components = filteredComponents.filter { $0.type == type }
+            return components.isEmpty ? nil : (type, components)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            // Header
+            InspectorSectionHeader("COMPONENTS")
+
+            // Search bar
+            TextField("Search components...", text: $searchText)
+                .textFieldStyle(.roundedBorder)
+                .font(.caption)
+
+            // Type filter
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    FilterChip(
+                        title: "All",
+                        isSelected: selectedType == nil,
+                        action: { selectedType = nil }
+                    )
+
+                    ForEach([ComponentType.receiver, .processor, .exporter, .extension, .connector], id: \.self) { type in
+                        FilterChip(
+                            title: type.displayName,
+                            isSelected: selectedType == type,
+                            action: { selectedType = type }
+                        )
                     }
-                } header: {
-                    InspectorSectionHeader("QUICK ACTIONS")
                 }
-                
-                Divider()
-                
-                // Status
-                Section {
-                    VStack(alignment: .leading, spacing: 8) {
-                        LabeledContent("Status") {
-                            HStack {
-                                Circle()
-                                    .fill(isRunning ? .green : .gray)
-                                    .frame(width: 8, height: 8)
-                                Text(isRunning ? "Running" : "Stopped")
-                                    .font(.caption)
-                            }
-                        }
-                        
-                        if container.collectorManager.activeCollector?.id == collectorId,
-                           let startTime = container.collectorManager.activeCollector?.startTime {
-                            LabeledContent("Uptime") {
-                                Text(startTime.formatted(.relative(presentation: .named)))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                        
-                        LabeledContent("Version") {
-                            Text(record.version)
+                .padding(.horizontal, 2)
+            }
+
+            // Component list
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 8) {
+                    if filteredComponents.isEmpty {
+                        VStack {
+                            Image(systemName: "magnifyingglass")
+                                .font(.title2)
+                                .foregroundColor(.secondary)
+                            Text("No components found")
                                 .font(.caption)
-                                .foregroundStyle(.secondary)
+                                .foregroundColor(.secondary)
                         }
-                        
-                        if container.collectorManager.isProcessingOperation && 
-                           container.collectorManager.activeCollector?.id == collectorId {
-                            LabeledContent("Operation") {
+                        .frame(maxWidth: .infinity)
+                        .padding()
+                    } else {
+                        ForEach(componentsByType, id: \.0) { type, components in
+                            VStack(alignment: .leading, spacing: 4) {
+                                // Type header
                                 HStack {
-                                    ProgressView()
-                                        .scaleEffect(0.8)
-                                    Text("Processing...")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
+                                    Image(systemName: iconForComponentType(type))
+                                        .font(.caption2)
+                                        .foregroundColor(type.color)
+                                    Text(type.displayName)
+                                        .font(.caption2)
+                                        .fontWeight(.medium)
+                                        .foregroundColor(type.color)
+                                    Spacer()
+                                    Text("\\(components.count)")
+                                        .font(.caption2)
+                                        .foregroundColor(.secondary)
+                                }
+
+                                // Components of this type
+                                ForEach(components) { component in
+                                    ComponentRow(component: component)
                                 }
                             }
                         }
                     }
-                } header: {
-                    InspectorSectionHeader("STATUS")
                 }
-                
-                Divider()
-                
-                // Configuration Info
-                Section {
-                    VStack(alignment: .leading, spacing: 8) {
-                        LabeledContent("Binary") {
-                            Text(record.binaryPath)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                        }
-                        LabeledContent("Data Directory") {
-                            Text(FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".locol/collectors/\(record.name)").path)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
-                        }
-                    }
-                } header: {
-                    InspectorSectionHeader("CONFIGURATION")
-                }
-                
-                Divider()
-                
-                // Components Section omitted until store-backed snapshot is available.
-                
-                // Command Line Flags Section
-                if !(record.flags.isEmpty) {
-                    Section {
-                        Text(record.flags)
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                            .padding(.vertical, 4)
-                    } header: {
-                        InspectorSectionHeader("COMMAND LINE FLAGS")
-                    }
-                }
-            } else {
-                Text("Collector not found")
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .task {
-            if record == nil {
-                record = try? await container.collectorStore.getCollector(collectorId)
-            }
-        }
-    }
-    
-    private func toggleCollectorState() {
-        if isRunning {
-            container.collectorManager.stopCollector(withId: collectorId)
-        } else {
-            container.collectorManager.startCollector(withId: collectorId)
-        }
-    }
-    
-    private func restartCollector() {
-        container.collectorManager.stopCollector(withId: collectorId)
-        // Add a small delay then restart
-        Task {
-            try await Task.sleep(nanoseconds: 1_000_000_000) // 1 second
-            await MainActor.run {
-                container.collectorManager.startCollector(withId: collectorId)
+                .padding(.vertical, 4)
             }
         }
     }
 
-    private var isRunning: Bool {
-        // Prefer process state; fall back to DB record state
-        if container.collectorManager.isCollectorRunning(withId: collectorId) { return true }
-        return record?.isRunning ?? false
-    }
-
-    // MARK: - Pipeline editing helpers
-    private func binding(for component: ComponentInstance) -> Binding<ComponentInstance> {
-        // Top-level collections
-        if let index = container.pipelineConfig.receivers.firstIndex(of: component) {
-            return Binding(
-                get: { container.pipelineConfig.receivers[index] },
-                set: { container.pipelineConfig.receivers[index] = $0 }
-            )
-        } else if let index = container.pipelineConfig.processors.firstIndex(of: component) {
-            return Binding(
-                get: { container.pipelineConfig.processors[index] },
-                set: { container.pipelineConfig.processors[index] = $0 }
-            )
-        } else if let index = container.pipelineConfig.exporters.firstIndex(of: component) {
-            return Binding(
-                get: { container.pipelineConfig.exporters[index] },
-                set: { container.pipelineConfig.exporters[index] = $0 }
-            )
-        } else if let index = container.pipelineConfig.extensions.firstIndex(of: component) {
-            return Binding(
-                get: { container.pipelineConfig.extensions[index] },
-                set: { container.pipelineConfig.extensions[index] = $0 }
-            )
-        } else if let index = container.pipelineConfig.connectors.firstIndex(of: component) {
-            return Binding(
-                get: { container.pipelineConfig.connectors[index] },
-                set: { container.pipelineConfig.connectors[index] = $0 }
-            )
-        }
-        // Search inside pipelines
-        for pIndex in container.pipelineConfig.pipelines.indices {
-            if let rIndex = container.pipelineConfig.pipelines[pIndex].receivers.firstIndex(of: component) {
-                return Binding(
-                    get: { container.pipelineConfig.pipelines[pIndex].receivers[rIndex] },
-                    set: { container.pipelineConfig.pipelines[pIndex].receivers[rIndex] = $0 }
-                )
-            }
-            if let prIndex = container.pipelineConfig.pipelines[pIndex].processors.firstIndex(of: component) {
-                return Binding(
-                    get: { container.pipelineConfig.pipelines[pIndex].processors[prIndex] },
-                    set: { container.pipelineConfig.pipelines[pIndex].processors[prIndex] = $0 }
-                )
-            }
-            if let eIndex = container.pipelineConfig.pipelines[pIndex].exporters.firstIndex(of: component) {
-                return Binding(
-                    get: { container.pipelineConfig.pipelines[pIndex].exporters[eIndex] },
-                    set: { container.pipelineConfig.pipelines[pIndex].exporters[eIndex] = $0 }
-                )
-            }
-        }
-        // If not found, avoid crashing — provide a transient binding to a copy
-        let tmp = component
-        return Binding(
-            get: { tmp },
-            set: { _ in }
-        )
-    }
-
-    private func updateComponent(_ component: ComponentInstance) {
-        if let index = container.pipelineConfig.receivers.firstIndex(where: { $0.id == component.id }) {
-            container.pipelineConfig.receivers[index] = component
-        } else if let index = container.pipelineConfig.processors.firstIndex(where: { $0.id == component.id }) {
-            container.pipelineConfig.processors[index] = component
-        } else if let index = container.pipelineConfig.exporters.firstIndex(where: { $0.id == component.id }) {
-            container.pipelineConfig.exporters[index] = component
-        } else if let index = container.pipelineConfig.extensions.firstIndex(where: { $0.id == component.id }) {
-            container.pipelineConfig.extensions[index] = component
-        } else if let index = container.pipelineConfig.connectors.firstIndex(where: { $0.id == component.id }) {
-            container.pipelineConfig.connectors[index] = component
-        }
-
-        // Update in pipelines too
-        for (pipelineIndex, pipeline) in container.pipelineConfig.pipelines.enumerated() {
-            var updatedPipeline = pipeline
-            var needsUpdate = false
-            if let receiverIndex = updatedPipeline.receivers.firstIndex(where: { $0.id == component.id }) {
-                updatedPipeline.receivers[receiverIndex] = component
-                needsUpdate = true
-            }
-            if let processorIndex = updatedPipeline.processors.firstIndex(where: { $0.id == component.id }) {
-                updatedPipeline.processors[processorIndex] = component
-                needsUpdate = true
-            }
-            if let exporterIndex = updatedPipeline.exporters.firstIndex(where: { $0.id == component.id }) {
-                updatedPipeline.exporters[exporterIndex] = component
-                needsUpdate = true
-            }
-            if needsUpdate {
-                container.pipelineConfig.pipelines[pipelineIndex] = updatedPipeline
-            }
+    private func iconForComponentType(_ type: ComponentType) -> String {
+        switch type {
+        case .receiver:
+            return "antenna.radiowaves.left.and.right"
+        case .processor:
+            return "gearshape.2"
+        case .exporter:
+            return "arrow.up.right"
+        case .extension:
+            return "puzzlepiece.extension"
+        case .connector:
+            return "cable.connector"
         }
     }
 }
 
-// MARK: - Other Inspectors
+struct ComponentRow: View {
+    let component: CollectorComponent
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            // Drag handle
+            Image(systemName: "line.3.horizontal")
+                .font(.caption2)
+                .foregroundColor(.secondary.opacity(0.6))
+                .frame(width: 12)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(component.name)
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .lineLimit(1)
+
+                if let description = component.description {
+                    Text(description)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
+                }
+            }
+
+            Spacer()
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(
+            RoundedRectangle(cornerRadius: 4)
+                .fill(isHovered ? Color(.controlAccentColor).opacity(0.1) : Color.clear)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 4)
+                .stroke(isHovered ? Color(.controlAccentColor).opacity(0.3) : Color.clear, lineWidth: 1)
+        )
+        .onHover { hovering in
+            isHovered = hovering
+        }
+        .draggable("component-definition:\(component.id)") {
+            // Drag preview
+            HStack {
+                Image(systemName: iconForComponentType(component.type))
+                    .foregroundColor(component.type.color)
+                Text(component.name)
+                    .font(.caption)
+            }
+            .padding(8)
+            .background(Color(.controlBackgroundColor))
+            .cornerRadius(6)
+        }
+    }
+
+    private func iconForComponentType(_ type: ComponentType) -> String {
+        switch type {
+        case .receiver:
+            return "antenna.radiowaves.left.and.right"
+        case .processor:
+            return "gearshape.2"
+        case .exporter:
+            return "arrow.up.right"
+        case .extension:
+            return "puzzlepiece.extension"
+        case .connector:
+            return "cable.connector"
+        }
+    }
+}
+
+struct FilterChip: View {
+    let title: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.caption2)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+        }
+        .buttonStyle(.plain)
+        .background(
+            RoundedRectangle(cornerRadius: 12)
+                .fill(isSelected ? Color(.controlAccentColor) : Color(.controlBackgroundColor))
+        )
+        .foregroundColor(isSelected ? .white : .primary)
+    }
+}
+
+// MARK: - Other Inspectors (Simplified)
 
 struct OTLPReceiverInspector: View {
-    @Environment(AppContainer.self) private var container
-    @State private var serverRunning = false
-    
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Section {
-                VStack(alignment: .leading, spacing: 8) {
-                    LabeledContent("Status") {
-                        HStack {
-                            Circle()
-                                .fill(serverRunning ? .green : .gray)
-                                .frame(width: 8, height: 8)
-                            Text(serverRunning ? "Active" : "Inactive")
-                                .font(.caption)
-                        }
-                    }
-                    
-                    LabeledContent("Endpoint") {
-                        Text(container.settings.grpcEndpoint)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    
-                    LabeledContent("Signals") {
-                        VStack(alignment: .trailing, spacing: 2) {
-                            if container.settings.tracesEnabled {
-                                Text("Traces")
-                                    .font(.caption2)
-                                    .foregroundStyle(.green)
-                            }
-                            if container.settings.metricsEnabled {
-                                Text("Metrics")
-                                    .font(.caption2)
-                                    .foregroundStyle(.green)
-                            }
-                            if container.settings.logsEnabled {
-                                Text("Logs")
-                                    .font(.caption2)
-                                    .foregroundStyle(.green)
-                            }
-                        }
-                    }
-                }
-            } header: {
-                InspectorSectionHeader("RECEIVER STATUS")
-            }
-        }
-        .task {
-            serverRunning = await container.server.isRunning()
+        InspectorSection("OTLP RECEIVER") {
+            Text("OTLP receiver configuration")
+                .foregroundColor(.secondary)
         }
     }
 }
 
 struct TelemetryInspector: View {
-    @Environment(AppContainer.self) private var container
-    
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Section {
-                VStack(alignment: .leading, spacing: 8) {
-                    LabeledContent("Selected") {
-                        Text(container.viewer.selectedCollector)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    
-                    if !container.viewer.collectorStats.isEmpty {
-                        ForEach(container.viewer.collectorStats, id: \.collectorName) { stats in
-                            LabeledContent(stats.collectorName) {
-                                VStack(alignment: .trailing, spacing: 1) {
-                                    Text("\(stats.spanCount) spans")
-                                        .font(.caption2)
-                                    Text("\(stats.metricCount) metrics")
-                                        .font(.caption2)
-                                    Text("\(stats.logCount) logs")
-                                        .font(.caption2)
-                                }
-                                .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                }
-            } header: {
-                InspectorSectionHeader("TELEMETRY DATA")
-            }
+        InspectorSection("TELEMETRY VIEWER") {
+            Text("Telemetry viewer configuration")
+                .foregroundColor(.secondary)
         }
     }
 }
 
 struct DataGeneratorInspector: View {
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Section {
-                Text("Data generation tools and settings")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            } header: {
-                InspectorSectionHeader("DATA GENERATOR")
-            }
+        InspectorSection("DATA GENERATOR") {
+            Text("Data generator configuration")
+                .foregroundColor(.secondary)
         }
     }
 }
 
 struct SQLQueryInspector: View {
-    @Environment(AppContainer.self) private var container
-    
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Section {
-                VStack(alignment: .leading, spacing: 8) {
-                    LabeledContent("Target") {
-                        Text(container.viewer.selectedCollector)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    
-                    if let result = container.viewer.lastQueryResult {
-                        LabeledContent("Last Result") {
-                            Text("\(result.rows.count) rows")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    
-                    if container.viewer.isExecutingQuery {
-                        LabeledContent("Status") {
-                            HStack {
-                                ProgressView()
-                                    .scaleEffect(0.8)
-                                Text("Executing...")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        }
-                    }
-                }
-            } header: {
-                InspectorSectionHeader("QUERY STATUS")
-            }
+        InspectorSection("SQL QUERY") {
+            Text("SQL query configuration")
+                .foregroundColor(.secondary)
         }
     }
 }
 
 struct EmptyInspector: View {
     var body: some View {
-        VStack(spacing: 16) {
-            Image(systemName: "sidebar.right")
+        VStack {
+            Image(systemName: "info.circle")
                 .font(.largeTitle)
-                .foregroundStyle(.tertiary)
-            
-            Text("Inspector")
-                .font(.headline)
-                .foregroundStyle(.secondary)
-            
-            Text("Select an item from the sidebar to view contextual information and controls")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
+                .foregroundColor(.secondary)
+            Text("Select an item to inspect")
+                .foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -464,63 +330,63 @@ struct EmptyInspector: View {
 
 // MARK: - Helper Views
 
+struct InspectorSection<Content: View>: View {
+    let title: String
+    let content: () -> Content
+
+    init(_ title: String, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.content = content
+    }
+
+    var body: some View {
+        Section {
+            content()
+        } header: {
+            InspectorSectionHeader(title)
+        }
+    }
+}
+
 struct InspectorSectionHeader: View {
     let title: String
-    
+
     init(_ title: String) {
         self.title = title
     }
-    
+
     var body: some View {
         Text(title)
             .font(.caption)
-            .foregroundStyle(.secondary)
+            .fontWeight(.semibold)
+            .foregroundColor(.secondary)
             .textCase(.uppercase)
     }
 }
 
-struct ComponentInspectorSection: View {
-    let title: String
-    let items: [String]
-    let icon: String
-    
+struct InspectorRow: View {
+    let label: String
+    let value: String
+
+    init(_ label: String, value: String) {
+        self.label = label
+        self.value = value
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack {
-                Image(systemName: icon)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                Text(title)
-                    .font(.caption)
-                    .fontWeight(.medium)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text("\(items.count)")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-            }
-            
-            if items.count <= 3 {
-                // Show all items if few
-                ForEach(items, id: \.self) { item in
-                    Text("• \(item)")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .padding(.leading, 4)
-                }
-            } else {
-                // Show first 2 and "... X more"
-                ForEach(items.prefix(2), id: \.self) { item in
-                    Text("• \(item)")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .padding(.leading, 4)
-                }
-                Text("• ... \(items.count - 2) more")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                    .padding(.leading, 4)
-            }
+        HStack {
+            Text(label)
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Spacer()
+            Text(value)
+                .font(.caption)
+                .textSelection(.enabled)
         }
     }
+}
+
+#Preview {
+    InspectorView(item: nil)
+        .environment(AppContainer())
 }

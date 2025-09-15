@@ -58,6 +58,7 @@ struct MainAppView: View {
                 .inspector(isPresented: $showInspector) {
                     InspectorView(item: selectedItem)
                         .inspectorColumnWidth(min: 180, ideal: 280, max: 360)
+                        .databaseContext(container.databaseContext!)
                 }
                 .toolbar {
                     ToolbarItemGroup(placement: .primaryAction) {
