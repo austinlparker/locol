@@ -12,7 +12,8 @@ struct PipelineDesignerView: View {
     @Query(ComponentsRequest()) private var allComponents: [CollectorComponent]
     @Query(DocumentRequest()) private var document: Document?
 
-    // (no old drag state needed)
+    // Component configuration modal state
+    @State private var componentToEdit: ComponentInstance? = nil
     
     init(collectorId: UUID? = nil) {
         self.collectorId = collectorId
@@ -52,31 +53,24 @@ struct PipelineDesignerView: View {
         .task {
             await loadCollectorConfiguration()
         }
+        .sheet(item: $componentToEdit) { component in
+            ComponentConfigurationModal(
+                component: component,
+                onSave: { updatedComponent in
+                    updateComponent(updatedComponent)
+                    componentToEdit = nil
+                },
+                onCancel: {
+                    componentToEdit = nil
+                }
+            )
+        }
     }
     
     // MARK: - Pipeline Canvas
     
     private var pipelineCanvas: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Canvas header
-            HStack {
-                if let pipeline = container.selectedPipeline {
-                    Text("Pipeline: \(pipeline.name)")
-                        .font(.headline)
-                    
-                } else {
-                    Text("Select a pipeline to edit")
-                        .font(.headline)
-                        .foregroundStyle(.secondary)
-                    
-                    Spacer()
-                }
-            }
-            .padding()
-            
-            Divider()
-            
-            // Canvas content - All pipelines with grid background
+        // Canvas content - All pipelines with grid background
             GeometryReader { geometry in
                 ZStack {
                     // Grid background for entire designer
@@ -89,7 +83,7 @@ struct PipelineDesignerView: View {
                                     pipeline: pipeline,
                                     definitions: allComponents,
                                     onComponentSelected: { component in
-                                        container.selectedPipelineComponent = component
+                                        componentToEdit = component
                                     },
                                     createInstance: { component in
                                         createInstance(for: component)
@@ -130,8 +124,6 @@ struct PipelineDesignerView: View {
                     }
                 }
             }
-
-        }
     }
 
     // MARK: - Helper Views
@@ -210,7 +202,7 @@ struct PipelineDesignerView: View {
         container.pipelineConfig[keyPath: keyPath].remove(atOffsets: indices)
     }
 
-    private func updateCollectorComponent(_ component: ComponentInstance) {
+    private func updateComponent(_ component: ComponentInstance) {
         // Update the component in the appropriate array
         if let index = container.pipelineConfig.receivers.firstIndex(where: { $0.id == component.id }) {
             container.pipelineConfig.receivers[index] = component
@@ -676,6 +668,371 @@ struct StatusIndicator: View {
     }
 }
 
+// MARK: - Component Configuration Modal
+
+struct ComponentConfigurationModal: View {
+    let component: ComponentInstance
+    let onSave: (ComponentInstance) -> Void
+    let onCancel: () -> Void
+
+    @Environment(AppContainer.self) private var container
+
+    @State private var componentName: String
+    @State private var configurationValues: [String: ConfigValue] = [:]
+    @State private var configStructure: ConfigSection?
+    @State private var isLoading = true
+
+    init(component: ComponentInstance, onSave: @escaping (ComponentInstance) -> Void, onCancel: @escaping () -> Void) {
+        self.component = component
+        self.onSave = onSave
+        self.onCancel = onCancel
+        self._componentName = State(initialValue: component.name)
+    }
+
+    private var dynamicWidth: CGFloat {
+        let depth = configStructure?.maxDepth() ?? 1
+        let baseWidth: CGFloat = 500
+        return min(800, baseWidth + CGFloat(depth * 50))
+    }
+
+    private var dynamicHeight: CGFloat {
+        let fieldCount = configStructure?.getAllFields().count ?? 0
+        let depth = configStructure?.maxDepth() ?? 1
+        let baseHeight: CGFloat = 400
+        let heightPerField: CGFloat = 50
+        let depthBonus: CGFloat = CGFloat(depth * 30)
+        return min(700, max(400, baseHeight + CGFloat(fieldCount) * heightPerField + depthBonus))
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 20) {
+                // Header info
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Image(systemName: iconForComponentType(component.component.type))
+                            .foregroundColor(component.component.type.color)
+                            .font(.title2)
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(component.component.name)
+                                .font(.headline)
+                            Text(component.component.type.displayName)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+
+                        Spacer()
+                    }
+
+                    if let description = component.component.description {
+                        Text(description)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .padding(.top, 4)
+                    }
+                }
+                .padding()
+                .background(Color(.controlBackgroundColor))
+                .cornerRadius(8)
+
+                // Component name
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Instance Name")
+                        .font(.headline)
+                    TextField("Component name", text: $componentName)
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                // Configuration
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Configuration")
+                        .font(.headline)
+
+                    if isLoading {
+                        ProgressView("Loading fields...")
+                            .frame(maxWidth: .infinity, minHeight: 200)
+                    } else if configStructure == nil || (configStructure?.fields.isEmpty == true && configStructure?.subsections.isEmpty == true) {
+                        VStack(spacing: 8) {
+                            Image(systemName: "doc.text")
+                                .font(.largeTitle)
+                                .foregroundColor(.secondary)
+                            Text("No configuration fields available")
+                                .font(.headline)
+                                .foregroundColor(.secondary)
+                            Text("This component doesn't have any configurable fields.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 200)
+                    } else if let configStructure = configStructure {
+                        ScrollView {
+                            LazyVStack(spacing: 8) {
+                                ConfigSectionView(
+                                    section: configStructure,
+                                    configurationValues: $configurationValues,
+                                    isRoot: true
+                                )
+                            }
+                            .padding(12)
+                        }
+                        .frame(minHeight: 150, maxHeight: .infinity)
+                        .background(Color(.controlBackgroundColor).opacity(0.3))
+                        .cornerRadius(8)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(Color(.separatorColor).opacity(0.5), lineWidth: 1)
+                        )
+                    }
+                }
+
+                Spacer()
+            }
+            .padding()
+            .navigationTitle("Configure Component")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        onCancel()
+                    }
+                }
+
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        saveConfiguration()
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+        }
+        .frame(width: dynamicWidth, height: dynamicHeight)
+        .onAppear {
+            loadFieldsAndConfiguration()
+        }
+    }
+
+    private func loadFieldsAndConfiguration() {
+        isLoading = true
+
+        // Build hierarchical configuration structure
+        configStructure = container.componentDatabase.buildConfigStructure(for: component.component)
+
+        // Start with existing configuration values - no conversion needed!
+        configurationValues = component.configuration
+
+        // Set default values for fields that don't have current values
+        let allFields = configStructure?.getAllFields() ?? []
+        for field in allFields {
+            if configurationValues[field.name] == nil {
+                if let defaultValue = field.defaultValue {
+                    // Parse the default value JSON to ConfigValue
+                    configurationValues[field.name] = ConfigValue.from(any: defaultValue)
+                } else {
+                    // Set appropriate default based on field type
+                    switch field.kind.lowercased() {
+                    case "bool":
+                        configurationValues[field.name] = .bool(false)
+                    case "int", "int64":
+                        configurationValues[field.name] = .int(0)
+                    case "float64":
+                        configurationValues[field.name] = .double(0.0)
+                    case "duration":
+                        configurationValues[field.name] = .duration(0)
+                    default:
+                        configurationValues[field.name] = .string("")
+                    }
+                }
+            }
+        }
+
+        isLoading = false
+    }
+
+    private func saveConfiguration() {
+        // Since we're working directly with ConfigValue, just use the current values
+        // Filter out any null/empty values for cleaner config
+        var newConfiguration: [String: ConfigValue] = [:]
+
+        for (key, value) in configurationValues {
+            switch value {
+            case .string(let str) where !str.isEmpty:
+                newConfiguration[key] = value
+            case .int(_), .bool(_), .double(_), .duration(_), .stringArray(_), .array(_), .stringMap(_), .map(_):
+                newConfiguration[key] = value
+            case .null:
+                // Skip null values
+                break
+            default:
+                // Skip empty strings
+                break
+            }
+        }
+
+        // Create updated component by copying and updating
+        var updatedComponent = component
+        updatedComponent.name = componentName
+        updatedComponent.configuration = newConfiguration
+
+        onSave(updatedComponent)
+    }
+
+    private func iconForComponentType(_ type: ComponentType) -> String {
+        switch type {
+        case .receiver:
+            return "antenna.radiowaves.left.and.right"
+        case .processor:
+            return "gearshape.2"
+        case .exporter:
+            return "arrow.up.right"
+        case .extension:
+            return "puzzlepiece.extension"
+        case .connector:
+            return "cable.connector"
+        }
+    }
+
+    private static func configValueToString(_ value: ConfigValue) -> String {
+        switch value {
+        case .string(let str):
+            return str
+        case .int(let int):
+            return String(int)
+        case .bool(let bool):
+            return String(bool)
+        case .double(let double):
+            return String(double)
+        case .duration(let duration):
+            return "\(duration)"
+        case .stringArray(let array):
+            return "[" + array.map { "\"\($0)\"" }.joined(separator: ", ") + "]"
+        case .array(let array):
+            return "[" + array.map { Self.configValueToString($0) }.joined(separator: ", ") + "]"
+        case .stringMap(let map):
+            return "{" + map.map { "\($0.key): \"\($0.value)\"" }.joined(separator: ", ") + "}"
+        case .map(let map):
+            return "{" + map.map { "\($0.key): \(Self.configValueToString($0.value))" }.joined(separator: ", ") + "}"
+        case .null:
+            return "null"
+        }
+    }
+}
+
+// MARK: - Config Field View
+
+struct ConfigFieldView: View {
+    let field: Field
+    @Binding var value: ConfigValue
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // Field header
+            HStack {
+                HStack(spacing: 4) {
+                    Text(field.displayName)
+                        .font(.headline)
+                        .foregroundColor(.primary)
+
+                    if field.isRequired {
+                        Text("*")
+                            .foregroundColor(.red)
+                            .font(.headline)
+                    }
+
+                    // Help tooltip for description
+                    if let description = field.description, !description.isEmpty {
+                        Image(systemName: "questionmark.circle")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .help(description)
+                    }
+                }
+
+                Spacer()
+
+                if !field.kind.isEmpty {
+                    Text(field.kind)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color(.controlBackgroundColor))
+                        .cornerRadius(4)
+                }
+            }
+
+            // Field control based on type using enum
+            switch field.controlType {
+            case .textField:
+                TextField(field.defaultValue ?? "Enter \(field.name)", text: Binding(
+                    get: {
+                        if case .string(let str) = value { return str }
+                        return ""
+                    },
+                    set: { value = .string($0) }
+                ))
+                .textFieldStyle(.roundedBorder)
+
+            case .numberField:
+                TextField(field.defaultValue ?? "0", text: Binding(
+                    get: {
+                        switch value {
+                        case .int(let int): return String(int)
+                        case .double(let double): return String(double)
+                        default: return ""
+                        }
+                    },
+                    set: {
+                        if field.kind.lowercased().contains("float") || field.kind.lowercased().contains("double") {
+                            value = .double(Double($0) ?? 0.0)
+                        } else {
+                            value = .int(Int($0) ?? 0)
+                        }
+                    }
+                ))
+                .textFieldStyle(.roundedBorder)
+
+            case .toggle:
+                Toggle(isOn: Binding(
+                    get: {
+                        if case .bool(let bool) = value { return bool }
+                        return false
+                    },
+                    set: { newValue in
+                        value = .bool(newValue)
+                    }
+                )) {
+                    EmptyView()
+                }
+
+            default:
+                // Fallback to text field for unsupported types
+                TextField(field.defaultValue ?? "Enter \(field.name)", text: Binding(
+                    get: {
+                        if case .string(let str) = value { return str }
+                        return ""
+                    },
+                    set: { value = .string($0) }
+                ))
+                .textFieldStyle(.roundedBorder)
+            }
+
+            // Unit display
+            if let unit = field.unit, !unit.isEmpty {
+                Text("Unit: \(unit)")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .padding()
+        .background(Color(.textBackgroundColor))
+        .cornerRadius(8)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(field.isRequired && value.isEmpty ? Color.red.opacity(0.3) : Color(.separatorColor), lineWidth: 1)
+        )
+    }
+}
+
 // MARK: - Extensions
 
 extension UTType {
@@ -684,6 +1041,86 @@ extension UTType {
     }
 }
 
+// MARK: - Config Section View
+
+struct ConfigSectionView: View {
+    @ObservedObject var section: ConfigSection
+    @Binding var configurationValues: [String: ConfigValue]
+    let isRoot: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // Section header with collapse toggle (skip for root section)
+            if !isRoot {
+                Button(action: {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        section.isExpanded.toggle()
+                    }
+                }) {
+                    HStack(spacing: 8) {
+                        Image(systemName: section.isExpanded ? "chevron.down" : "chevron.right")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .animation(.easeInOut(duration: 0.2), value: section.isExpanded)
+
+                        Text(section.name.capitalized)
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundColor(.primary)
+
+                        Spacer()
+
+                        if !section.fields.isEmpty {
+                            Text("\(section.fields.count)")
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color(.separatorColor).opacity(0.3))
+                                .clipShape(Capsule())
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, 4)
+                .padding(.vertical, 2)
+            }
+
+            if section.isExpanded {
+                VStack(spacing: 8) {
+                    // Direct fields in this section
+                    ForEach(section.fields) { field in
+                        ConfigFieldView(
+                            field: field,
+                            value: Binding(
+                                get: { configurationValues[field.name] ?? .string("") },
+                                set: { configurationValues[field.name] = $0 }
+                            )
+                        )
+                        .padding(.leading, isRoot ? 0 : 12)
+                    }
+
+                    // Subsections
+                    ForEach(Array(section.subsections.keys.sorted()), id: \.self) { key in
+                        if let subsection = section.subsections[key] {
+                            ConfigSectionView(
+                                section: subsection,
+                                configurationValues: $configurationValues,
+                                isRoot: false
+                            )
+                            .padding(.leading, isRoot ? 0 : 8)
+                        }
+                    }
+                }
+                .clipped()
+                .transition(.asymmetric(
+                    insertion: .scale(scale: 0.95, anchor: .topLeading).combined(with: .opacity),
+                    removal: .scale(scale: 0.95, anchor: .topLeading).combined(with: .opacity)
+                ))
+            }
+        }
+    }
+}
 
 #Preview {
     PipelineDesignerView()
