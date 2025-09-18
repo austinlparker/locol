@@ -53,3 +53,7 @@ components.db
 
 # Generated protobuf files
 locol/Generated/
+
+# Local working repos
+.work/
+scripts/.work/
