@@ -4,7 +4,7 @@ ifneq (,$(wildcard .env))
     export
 endif
 
-.PHONY: all clean build archive dmg notarize gen-swift gen-grpc clean-proto build-plugins lint format precommit install-hooks components-db components-db-clean
+.PHONY: all clean build archive dmg notarize gen-swift gen-grpc clean-proto build-plugins lint format precommit install-hooks components-db components-db-clean components-json
 
 # Only require Apple signing env vars for code-signing related targets
 NEED_CODESIGN_TARGETS := build_deps build archive export dmg notarize
@@ -195,7 +195,12 @@ install-hooks:
 # Build the OpenTelemetry component database used by the app
 components-db:
 	@echo "Building component database..."
-	@bash scripts/extract_all_versions.sh
+	@bash scripts/parse-otelcol/parse.sh --output-dir $(PWD)/Resources --keep-json
+
+# Extract OpenTelemetry component configurations to JSON files only
+components-json:
+	@echo "Extracting component configurations to JSON..."
+	@bash scripts/parse-otelcol/parse.sh --output-dir $(PWD)/Resources --json-only
 
 # Clean generated component database and temporary JSONs
 components-db-clean:

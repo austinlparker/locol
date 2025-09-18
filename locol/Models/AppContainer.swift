@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import Yams
+import GRDBQuery
 
 @MainActor
 @Observable
@@ -10,15 +11,19 @@ final class AppContainer {
     let settings: OTLPReceiverSettings
     let server: OTLPServer
     let viewer: TelemetryViewer
-    let snippetManager: ConfigSnippetManager
     let collectorManager: CollectorManager
     let componentDatabase: ComponentDatabase
     let collectorsViewModel: CollectorsViewModel
-    
+
     // Pipeline Designer state hoisted for Inspector-driven editing
     var pipelineConfig: CollectorConfiguration = CollectorConfiguration(version: "v0.135.0")
     var selectedPipeline: PipelineConfiguration? = nil
     var selectedPipelineComponent: ComponentInstance? = nil
+
+    /// Provides database context for GRDBQuery @Query property wrappers
+    var databaseContext: DatabaseContext? {
+        componentDatabase.databaseContext
+    }
     
     init() {
         self.storage = TelemetryStorage()
@@ -26,7 +31,6 @@ final class AppContainer {
         self.collectorStore = CollectorStore()
         self.server = OTLPServer(storage: storage, settings: settings)
         self.viewer = TelemetryViewer(storage: storage)
-        self.snippetManager = ConfigSnippetManager(settings: settings)
         self.collectorManager = CollectorManager(settings: settings, storage: storage, collectorStore: collectorStore)
         self.componentDatabase = ComponentDatabase()
         self.collectorsViewModel = CollectorsViewModel(store: collectorStore)

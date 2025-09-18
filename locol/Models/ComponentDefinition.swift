@@ -213,9 +213,9 @@ struct Field: Codable, Identifiable, Hashable, Sendable {
             return .toggle
         case "duration":
             return .durationPicker
-        case "[]string", "slice":
+        case "[]string", "slice", "stringarray", "array":
             return .arrayEditor
-        case "map":
+        case "map", "stringmap":
             return .mapEditor
         default:
             return .textField

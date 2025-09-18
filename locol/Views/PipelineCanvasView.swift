@@ -1,11 +1,12 @@
 import SwiftUI
+import os
 
 struct PipelineCanvasView: View {
     @Binding var pipeline: PipelineConfiguration
-    let definitions: [ComponentDefinition]
+    let definitions: [CollectorComponent]
     let onComponentSelected: (ComponentInstance) -> Void
     // Creates a new instance for a definition, ensuring it's added to top-level config
-    let createInstance: (ComponentDefinition) -> ComponentInstance
+    let createInstance: (CollectorComponent) -> ComponentInstance
     
     private let componentSpacing: CGFloat = 120
     private let componentSize = CGSize(width: 100, height: 80)
@@ -63,74 +64,75 @@ struct PipelineCanvasView: View {
     // MARK: - Pipeline Flow
     
     private var pipelineFlow: some View {
-        VStack(spacing: 40) {
+        VStack(spacing: 20) {
             // Title
             Text("Pipeline: \(pipeline.name)")
                 .font(.title2)
                 .fontWeight(.bold)
-                .padding(.top, 40)
-            
-            VStack(spacing: 40) {
-                // Receivers row
-                if !pipeline.receivers.isEmpty {
-                    pipelineStage(
-                        title: "Receivers",
-                        components: pipeline.receivers,
-                        color: .blue,
-                        systemImage: "antenna.radiowaves.left.and.right"
-                    )
-                } else {
-                    emptyStage(
-                        title: "Receivers",
-                        color: .blue,
-                        systemImage: "antenna.radiowaves.left.and.right",
-                        dropTypes: [.receiver]
-                    )
+                .padding(.top, 20)
+
+            HStack(spacing: 40) {
+                // Receivers
+                Group {
+                    if !pipeline.receivers.isEmpty {
+                        pipelineStage(
+                            title: "Receivers",
+                            components: pipeline.receivers,
+                            color: .blue,
+                            systemImage: "antenna.radiowaves.left.and.right"
+                        )
+                    } else {
+                        emptyStage(
+                            title: "Receivers",
+                            color: .blue,
+                            systemImage: "antenna.radiowaves.left.and.right",
+                            dropTypes: [.receiver]
+                        )
+                    }
                 }
-                
+
                 // Flow arrow
-                if !pipeline.receivers.isEmpty || !pipeline.processors.isEmpty || !pipeline.exporters.isEmpty {
-                    flowArrow
+                flowArrow
+
+                // Processors
+                Group {
+                    if !pipeline.processors.isEmpty {
+                        pipelineStage(
+                            title: "Processors",
+                            components: pipeline.processors,
+                            color: .orange,
+                            systemImage: "gearshape.2"
+                        )
+                    } else {
+                        emptyStage(
+                            title: "Processors (Optional)",
+                            color: .orange,
+                            systemImage: "gearshape.2",
+                            dropTypes: [.processor]
+                        )
+                    }
                 }
-                
-                // Processors row (optional)
-                if !pipeline.processors.isEmpty {
-                    pipelineStage(
-                        title: "Processors",
-                        components: pipeline.processors,
-                        color: .orange,
-                        systemImage: "gearshape.2"
-                    )
-                    
-                    // Flow arrow
-                    flowArrow
-                } else if !pipeline.receivers.isEmpty || !pipeline.exporters.isEmpty {
-                    emptyStage(
-                        title: "Processors (Optional)",
-                        color: .orange,
-                        systemImage: "gearshape.2",
-                        dropTypes: [.processor]
-                    )
-                    
-                    // Flow arrow  
-                    flowArrow
-                }
-                
-                // Exporters row
-                if !pipeline.exporters.isEmpty {
-                    pipelineStage(
-                        title: "Exporters",
-                        components: pipeline.exporters,
-                        color: .green,
-                        systemImage: "arrow.up.right"
-                    )
-                } else {
-                    emptyStage(
-                        title: "Exporters",
-                        color: .green,
-                        systemImage: "arrow.up.right",
-                        dropTypes: [.exporter]
-                    )
+
+                // Flow arrow
+                flowArrow
+
+                // Exporters
+                Group {
+                    if !pipeline.exporters.isEmpty {
+                        pipelineStage(
+                            title: "Exporters",
+                            components: pipeline.exporters,
+                            color: .green,
+                            systemImage: "arrow.up.right"
+                        )
+                    } else {
+                        emptyStage(
+                            title: "Exporters",
+                            color: .green,
+                            systemImage: "arrow.up.right",
+                            dropTypes: [.exporter]
+                        )
+                    }
                 }
             }
             
@@ -168,7 +170,8 @@ struct PipelineCanvasView: View {
                         onTap: { onComponentSelected(component) },
                         onRemove: {
                             removeComponentFromPipeline(component)
-                        }
+                        },
+                        draggableId: component.id
                     )
                 }
             }
@@ -179,7 +182,7 @@ struct PipelineCanvasView: View {
         .frame(maxWidth: 500)
         .onDrop(of: [.text], delegate: StageDropDelegate(
             pipeline: $pipeline,
-            stageType: components.first?.definition.type ?? .receiver,
+            stageType: components.first?.component.type ?? .receiver,
             definitions: definitions,
             createInstance: createInstance
         ))
@@ -220,10 +223,10 @@ struct PipelineCanvasView: View {
     }
     
     private var flowArrow: some View {
-        Image(systemName: "arrow.down")
+        Image(systemName: "arrow.right")
             .font(.title2)
             .foregroundStyle(.secondary)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 8)
     }
     
     private func removeComponentFromPipeline(_ component: ComponentInstance) {
@@ -239,18 +242,31 @@ struct ComponentCardView: View {
     let component: ComponentInstance
     let onTap: () -> Void
     let onRemove: () -> Void
+    private let draggableId: UUID?
+
+    init(
+        component: ComponentInstance,
+        onTap: @escaping () -> Void,
+        onRemove: @escaping () -> Void,
+        draggableId: UUID? = nil
+    ) {
+        self.component = component
+        self.onTap = onTap
+        self.onRemove = onRemove
+        self.draggableId = draggableId
+    }
     
     @State private var isHovered = false
     
     var body: some View {
-        VStack(spacing: 8) {
+        let content = VStack(spacing: 8) {
             // Type icon
-            Image(systemName: iconForComponent(component.definition.type))
+            Image(systemName: iconForComponent(component.component.type))
                 .font(.title3)
-                .foregroundColor(component.definition.type.color)
+                .foregroundColor(component.component.type.color)
             
             // Component name
-            Text(component.displayName)
+            Text(component.name)
                 .font(.caption)
                 .fontWeight(.medium)
                 .lineLimit(2)
@@ -273,7 +289,7 @@ struct ComponentCardView: View {
         .overlay(
             RoundedRectangle(cornerRadius: 8)
                 .stroke(
-                    isHovered ? component.definition.type.color : Color.clear,
+                    isHovered ? component.component.type.color : Color.clear,
                     lineWidth: 2
                 )
         )
@@ -298,8 +314,21 @@ struct ComponentCardView: View {
         .onTapGesture {
             onTap()
         }
+
+        return Group {
+            if let draggableId {
+                content
+                    .onDrag {
+                        let payload = "component-instance:\(draggableId.uuidString)"
+                        Logger.ui.debug("Canvas card dragging existing instance: \(payload, privacy: .public)")
+                        return NSItemProvider(object: payload as NSString)
+                    }
+            } else {
+                content
+            }
+        }
     }
-    
+
     private func iconForComponent(_ type: ComponentType) -> String {
         switch type {
         case .receiver:
@@ -314,28 +343,43 @@ struct ComponentCardView: View {
             return "cable.connector"
         }
     }
+
+    private var dragPreview: some View {
+        HStack {
+            Image(systemName: iconForComponent(component.component.type))
+                .foregroundColor(component.component.type.color)
+            Text(component.name)
+                .font(.caption)
+        }
+        .padding(8)
+        .background(Color(.controlBackgroundColor))
+        .cornerRadius(6)
+    }
 }
 
 // MARK: - Drop Delegates
 
 struct PipelineDropDelegate: DropDelegate {
     @Binding var pipeline: PipelineConfiguration
-    let definitions: [ComponentDefinition]
-    let createInstance: (ComponentDefinition) -> ComponentInstance
+    let definitions: [CollectorComponent]
+    let createInstance: (CollectorComponent) -> ComponentInstance
     
     func performDrop(info: DropInfo) -> Bool {
         // Handle dropping components (from the drawer)
         guard let itemProviders = info.itemProviders(for: [.text]).first else { return false }
-        
+
+        Logger.ui.debug("Canvas pipeline drop initiated")
         itemProviders.loadItem(forTypeIdentifier: "public.text", options: nil) { (item, error) in
-            if let data = item as? Data,
-               let payload = String(data: data, encoding: .utf8) {
+            if let payload = extractDropPayload(item) {
+                Logger.ui.debug("Canvas pipeline drop payload: \(payload, privacy: .public)")
                 DispatchQueue.main.async {
                     handleDropPayload(payload)
                 }
+            } else {
+                Logger.ui.error("Canvas pipeline drop missing payload")
             }
         }
-        
+
         return true
     }
     
@@ -344,13 +388,25 @@ struct PipelineDropDelegate: DropDelegate {
            let idStr = payload.split(separator: ":").last,
            let id = Int(idStr),
            let def = definitions.first(where: { $0.id == id }) {
+            Logger.ui.debug("Canvas creating new instance from definition id=\(id)")
             let instance = createInstance(def)
             addComponentToPipeline(instance)
+        } else if payload.hasPrefix("component-instance:"),
+                  let uuidString = payload.split(separator: ":").last,
+                  let uuid = UUID(uuidString: String(uuidString)) {
+            Logger.ui.debug("Canvas reusing existing instance uuid=\(uuid.uuidString, privacy: .public)")
+            if let existing = (pipeline.receivers + pipeline.processors + pipeline.exporters).first(where: { $0.id == uuid }) {
+                addComponentToPipeline(existing)
+            } else {
+                Logger.ui.error("Canvas could not resolve instance uuid=\(uuid.uuidString, privacy: .public) in current pipeline")
+            }
+        } else {
+            Logger.ui.error("Canvas drop payload not recognized: \(payload, privacy: .public)")
         }
     }
 
     private func addComponentToPipeline(_ component: ComponentInstance) {
-        switch component.definition.type {
+        switch component.component.type {
         case .receiver:
             if !pipeline.receivers.contains(where: { $0.id == component.id }) {
                 pipeline.receivers.append(component)
@@ -372,8 +428,8 @@ struct PipelineDropDelegate: DropDelegate {
 struct StageDropDelegate: DropDelegate {
     @Binding var pipeline: PipelineConfiguration
     let stageType: ComponentType
-    let definitions: [ComponentDefinition]
-    let createInstance: (ComponentDefinition) -> ComponentInstance
+    let definitions: [CollectorComponent]
+    let createInstance: (CollectorComponent) -> ComponentInstance
     
     func validateDrop(info: DropInfo) -> Bool {
         return info.hasItemsConforming(to: [.text])
@@ -381,16 +437,19 @@ struct StageDropDelegate: DropDelegate {
     
     func performDrop(info: DropInfo) -> Bool {
         guard let itemProviders = info.itemProviders(for: [.text]).first else { return false }
-        
+
+        Logger.ui.debug("Canvas stage drop initiated for stage=\(stageType.rawValue)")
         itemProviders.loadItem(forTypeIdentifier: "public.text", options: nil) { (item, error) in
-            if let data = item as? Data,
-               let payload = String(data: data, encoding: .utf8) {
+            if let payload = extractDropPayload(item) {
+                Logger.ui.debug("Canvas stage drop payload: \(payload, privacy: .public)")
                 DispatchQueue.main.async {
                     handleDropPayload(payload)
                 }
+            } else {
+                Logger.ui.error("Canvas stage drop missing payload")
             }
         }
-        
+
         return true
     }
 
@@ -405,7 +464,7 @@ struct StageDropDelegate: DropDelegate {
     }
 
     private func addIfMatchesStage(_ component: ComponentInstance) {
-        guard component.definition.type == stageType else { return }
+        guard component.component.type == stageType else { return }
         switch stageType {
         case .receiver:
             if !pipeline.receivers.contains(where: { $0.id == component.id }) {
@@ -425,15 +484,28 @@ struct StageDropDelegate: DropDelegate {
     }
 }
 
+private func extractDropPayload(_ item: NSSecureCoding?) -> String? {
+    if let data = item as? Data {
+        return String(data: data, encoding: .utf8)
+    }
+    if let string = item as? String {
+        return string
+    }
+    if let string = item as? NSString {
+        return string as String
+    }
+    return nil
+}
+
 #Preview {
-    @State var pipeline = PipelineConfiguration(name: "traces")
-    let defs: [ComponentDefinition] = []
+    @Previewable @State var pipeline = PipelineConfiguration(name: "traces")
+    let defs: [CollectorComponent] = []
     
     return PipelineCanvasView(
         pipeline: $pipeline,
         definitions: defs,
         onComponentSelected: { _ in },
-        createInstance: { def in ComponentInstance(definition: def, instanceName: def.name) }
+        createInstance: { def in ComponentInstance(component: def, name: def.name) }
     )
     .frame(width: 800, height: 600)
 }

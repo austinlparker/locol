@@ -9,10 +9,6 @@
 /* Begin PBXBuildFile section */
 		D27CBC2E2E71C29800F4ECCF /* components.db in Resources */ = {isa = PBXBuildFile; fileRef = D27CBC2D2E71C29800F4ECCF /* components.db */; };
 		D27CBC332E73376C00F4ECCF /* Honeycomb in Frameworks */ = {isa = PBXBuildFile; productRef = D27CBC322E73376C00F4ECCF /* Honeycomb */; };
-		E10DC4EA2D3753BF003EB040 /* exporters in Resources */ = {isa = PBXBuildFile; fileRef = E10DC4E62D3753BF003EB040 /* exporters */; };
-		E10DC4EB2D3753BF003EB040 /* processors in Resources */ = {isa = PBXBuildFile; fileRef = E10DC4E72D3753BF003EB040 /* processors */; };
-		E10DC4EC2D3753BF003EB040 /* receivers in Resources */ = {isa = PBXBuildFile; fileRef = E10DC4E82D3753BF003EB040 /* receivers */; };
-		E10DC4ED2D3753BF003EB040 /* templates in Resources */ = {isa = PBXBuildFile; fileRef = E10DC4E92D3753BF003EB040 /* templates */; };
 		E16002C32E655D5C0036957E /* protoc-gen-swift in Frameworks */ = {isa = PBXBuildFile; productRef = E17DF7962E63EDF70027C808 /* protoc-gen-swift */; };
 		E17DF78C2E63A3200027C808 /* Subprocess in Frameworks */ = {isa = PBXBuildFile; productRef = E17DF78B2E63A3200027C808 /* Subprocess */; };
 		E17DF7912E63EDF70027C808 /* SwiftProtobuf in Frameworks */ = {isa = PBXBuildFile; productRef = E17DF7902E63EDF70027C808 /* SwiftProtobuf */; };
@@ -42,12 +38,17 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		D22CB56A2E75AE3600A14546 /* AGENTS.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = AGENTS.md; sourceTree = "<group>"; };
 		D2588F962D398E6F00B45761 /* locolTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = locolTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		D268873C2E785BC600D32EA5 /* build_database.go */ = {isa = PBXFileReference; lastKnownFileType = text; path = build_database.go; sourceTree = "<group>"; };
+		D268873D2E785BC600D32EA5 /* go.mod */ = {isa = PBXFileReference; lastKnownFileType = text; path = go.mod; sourceTree = "<group>"; };
+		D268873E2E785BC600D32EA5 /* go.sum */ = {isa = PBXFileReference; lastKnownFileType = text; path = go.sum; sourceTree = "<group>"; };
+		D268873F2E785BC600D32EA5 /* main.go */ = {isa = PBXFileReference; lastKnownFileType = text; path = main.go; sourceTree = "<group>"; };
+		D26887402E785BC600D32EA5 /* parse.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = parse.sh; sourceTree = "<group>"; };
+		D26887492E785BC600D32EA5 /* pre-commit */ = {isa = PBXFileReference; lastKnownFileType = text; path = "pre-commit"; sourceTree = "<group>"; };
+		D268874B2E785BD800D32EA5 /* Makefile */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.make; path = Makefile; sourceTree = "<group>"; };
+		D26889DF2E786A3600D32EA5 /* .env */ = {isa = PBXFileReference; lastKnownFileType = text; path = .env; sourceTree = "<group>"; };
 		D27CBC2D2E71C29800F4ECCF /* components.db */ = {isa = PBXFileReference; lastKnownFileType = file; name = components.db; path = Resources/components.db; sourceTree = "<group>"; };
-		E10DC4E62D3753BF003EB040 /* exporters */ = {isa = PBXFileReference; lastKnownFileType = folder; name = exporters; path = locol/Resources/exporters; sourceTree = "<group>"; };
-		E10DC4E72D3753BF003EB040 /* processors */ = {isa = PBXFileReference; lastKnownFileType = folder; name = processors; path = locol/Resources/processors; sourceTree = "<group>"; };
-		E10DC4E82D3753BF003EB040 /* receivers */ = {isa = PBXFileReference; lastKnownFileType = folder; name = receivers; path = locol/Resources/receivers; sourceTree = "<group>"; };
-		E10DC4E92D3753BF003EB040 /* templates */ = {isa = PBXFileReference; lastKnownFileType = folder; name = templates; path = locol/Resources/templates; sourceTree = "<group>"; };
 		E183103C2D3420390070D311 /* locol.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = locol.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -58,16 +59,25 @@
 				Resources/exporters/honeycomb.yaml,
 				Resources/processors/resourcedetector.yaml,
 				Resources/receivers/hostmetrics.yaml,
-				Resources/templates/default.yaml,
 			);
 			target = E183103B2D3420390070D311 /* locol */;
 		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
+		D22CB5532E75ACD800A14546 /* docs */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = docs;
+			sourceTree = "<group>";
+		};
 		D2588F972D398E6F00B45761 /* locolTests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = locolTests;
+			sourceTree = "<group>";
+		};
+		D268874E2E785DD600D32EA5 /* Resources */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Resources;
 			sourceTree = "<group>";
 		};
 		E183103E2D3420390070D311 /* locol */ = {
@@ -115,24 +125,39 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		E17DFB4A2E64D35D0027C808 /* Frameworks */ = {
+		D26887412E785BC600D32EA5 /* parse-otelcol */ = {
 			isa = PBXGroup;
 			children = (
+				D268873C2E785BC600D32EA5 /* build_database.go */,
+				D268873D2E785BC600D32EA5 /* go.mod */,
+				D268873E2E785BC600D32EA5 /* go.sum */,
+				D268873F2E785BC600D32EA5 /* main.go */,
+				D26887402E785BC600D32EA5 /* parse.sh */,
 			);
-			name = Frameworks;
+			path = "parse-otelcol";
+			sourceTree = "<group>";
+		};
+		D268874A2E785BC600D32EA5 /* scripts */ = {
+			isa = PBXGroup;
+			children = (
+				D26887412E785BC600D32EA5 /* parse-otelcol */,
+				D26887492E785BC600D32EA5 /* pre-commit */,
+			);
+			path = scripts;
 			sourceTree = "<group>";
 		};
 		E18310332D3420390070D311 = {
 			isa = PBXGroup;
 			children = (
+				D268874B2E785BD800D32EA5 /* Makefile */,
+				D26889DF2E786A3600D32EA5 /* .env */,
+				D268874E2E785DD600D32EA5 /* Resources */,
+				D22CB56A2E75AE3600A14546 /* AGENTS.md */,
+				D268874A2E785BC600D32EA5 /* scripts */,
+				D22CB5532E75ACD800A14546 /* docs */,
 				D27CBC2D2E71C29800F4ECCF /* components.db */,
-				E10DC4E62D3753BF003EB040 /* exporters */,
-				E10DC4E72D3753BF003EB040 /* processors */,
-				E10DC4E82D3753BF003EB040 /* receivers */,
-				E10DC4E92D3753BF003EB040 /* templates */,
 				E183103E2D3420390070D311 /* locol */,
 				D2588F972D398E6F00B45761 /* locolTests */,
-				E17DFB4A2E64D35D0027C808 /* Frameworks */,
 				E183103D2D3420390070D311 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -183,9 +208,9 @@
 			buildRules = (
 			);
 			dependencies = (
-				E17DFB502E64D4E90027C808 /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
+				D268874E2E785DD600D32EA5 /* Resources */,
 				E183103E2D3420390070D311 /* locol */,
 			);
 			name = locol;
@@ -275,11 +300,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				E10DC4EA2D3753BF003EB040 /* exporters in Resources */,
-				E10DC4EB2D3753BF003EB040 /* processors in Resources */,
 				D27CBC2E2E71C29800F4ECCF /* components.db in Resources */,
-				E10DC4EC2D3753BF003EB040 /* receivers in Resources */,
-				E10DC4ED2D3753BF003EB040 /* templates in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -307,10 +328,6 @@
 			isa = PBXTargetDependency;
 			target = E183103B2D3420390070D311 /* locol */;
 			targetProxy = D2588F9A2D398E6F00B45761 /* PBXContainerItemProxy */;
-		};
-		E17DFB502E64D4E90027C808 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			productRef = E17DFB4F2E64D4E90027C808 /* protoc-gen-grpc-swift-2 */;
 		};
 /* End PBXTargetDependency section */
 
@@ -725,11 +742,6 @@
 			productName = GRPCProtobuf;
 		};
 		E17DFB4B2E64D35D0027C808 /* protoc-gen-grpc-swift-2 */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = E17DFB412E64BFB40027C808 /* XCRemoteSwiftPackageReference "grpc-swift-protobuf" */;
-			productName = "protoc-gen-grpc-swift-2";
-		};
-		E17DFB4F2E64D4E90027C808 /* protoc-gen-grpc-swift-2 */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = E17DFB412E64BFB40027C808 /* XCRemoteSwiftPackageReference "grpc-swift-protobuf" */;
 			productName = "protoc-gen-grpc-swift-2";

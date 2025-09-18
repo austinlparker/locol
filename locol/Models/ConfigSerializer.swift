@@ -129,7 +129,7 @@ class ConfigSerializer {
         
         for component in components {
             let componentConfig = try serializeComponentConfiguration(component.configuration)
-            result[component.instanceName] = componentConfig.isEmpty ? [:] : componentConfig
+            result[component.name] = componentConfig.isEmpty ? [:] : componentConfig
         }
         
         return result
@@ -195,15 +195,15 @@ class ConfigSerializer {
             var pipelineConfig: [String: Any] = [:]
             
             if !pipeline.receivers.isEmpty {
-                pipelineConfig["receivers"] = pipeline.receivers.map { $0.instanceName }
+                pipelineConfig["receivers"] = pipeline.receivers.map { $0.name }
             }
-            
+
             if !pipeline.processors.isEmpty {
-                pipelineConfig["processors"] = pipeline.processors.map { $0.instanceName }
+                pipelineConfig["processors"] = pipeline.processors.map { $0.name }
             }
-            
+
             if !pipeline.exporters.isEmpty {
-                pipelineConfig["exporters"] = pipeline.exporters.map { $0.instanceName }
+                pipelineConfig["exporters"] = pipeline.exporters.map { $0.name }
             }
             
             result[pipeline.name] = pipelineConfig
@@ -242,22 +242,22 @@ class ConfigSerializer {
         if let receivers = yamlDict["receivers"] as? [String: Any] {
             config.receivers = try await parseComponentsSection(receivers, type: .receiver, version: version)
         }
-        
+
         // Parse processors
         if let processors = yamlDict["processors"] as? [String: Any] {
             config.processors = try await parseComponentsSection(processors, type: .processor, version: version)
         }
-        
+
         // Parse exporters
         if let exporters = yamlDict["exporters"] as? [String: Any] {
             config.exporters = try await parseComponentsSection(exporters, type: .exporter, version: version)
         }
-        
+
         // Parse extensions
         if let extensions = yamlDict["extensions"] as? [String: Any] {
             config.extensions = try await parseComponentsSection(extensions, type: .`extension`, version: version)
         }
-        
+
         // Parse connectors
         if let connectors = yamlDict["connectors"] as? [String: Any] {
             config.connectors = try await parseComponentsSection(connectors, type: .connector, version: version)
@@ -273,52 +273,81 @@ class ConfigSerializer {
     }
     
     private static func parseComponentsSection(
-        _ section: [String: Any], 
-        type: ComponentType, 
+        _ section: [String: Any],
+        type: ComponentType,
         version: String
     ) async throws -> [ComponentInstance] {
-        
-        let database = ComponentDatabase()
+
         var instances: [ComponentInstance] = []
-        
+
         for (instanceName, instanceConfig) in section {
             // Parse component name (before any '/')
             let componentName = instanceName.components(separatedBy: "/").first ?? instanceName
-            
+
             // Find component definition by both name and expected type to avoid
             // picking the wrong component when names overlap across types (e.g., "otlp").
-            guard let definition = await database.component(name: componentName, type: type, version: version) else {
+            let definition = await Task { @MainActor in
+                let database = ComponentDatabase()
+                return database.getComponent(name: componentName, type: type)
+            }.value
+
+            guard let definition = definition else {
                 // Skip unknown components for now
                 continue
             }
-            
+
             var instance = ComponentInstance(
-                definition: definition,
-                instanceName: instanceName
+                component: definition,
+                name: instanceName
             )
-            
+
             // Parse configuration
             if let config = instanceConfig as? [String: Any] {
-                instance.configuration = try parseComponentConfiguration(config, for: definition)
+                instance.configuration = try await parseComponentConfiguration(config, for: definition)
             }
-            
+
             instances.append(instance)
         }
-        
+
         return instances
     }
     
     private static func parseComponentConfiguration(
-        _ config: [String: Any], 
-        for definition: ComponentDefinition
-    ) throws -> [String: ConfigValue] {
-        
+        _ config: [String: Any],
+        for definition: CollectorComponent
+    ) async throws -> [String: ConfigValue] {
+
         var result: [String: ConfigValue] = [:]
-        // Flatten nested dictionaries into dot paths so they can be matched to yamlKey
+        // Flatten nested dictionaries into dot paths so they can be matched to field names
         let flat = flatten(config)
+
+        let fieldInfo = await Task { @MainActor in
+            let database = ComponentDatabase()
+            let fields = database.getFields(for: definition)
+            return fields.map { field -> (Field, String) in
+                (field, field.getFullPath(database: database))
+            }
+        }.value
+
+        let nameToField: [String: Field] = Dictionary(uniqueKeysWithValues: fieldInfo.map { info in
+            (info.0.name, info.0)
+        })
+
+        let idToCanonicalPath: [Int: String] = Dictionary(uniqueKeysWithValues: fieldInfo.map { info in
+            let path = info.1.isEmpty ? info.0.name : info.1
+            return (info.0.id, path)
+        })
+
+        let pathToField: [String: Field] = Dictionary(uniqueKeysWithValues: fieldInfo.map { info in
+            let path = idToCanonicalPath[info.0.id] ?? info.0.name
+            return (path, info.0)
+        })
+
         for (key, value) in flat {
-            if let field = definition.fields.first(where: { $0.yamlKey == key }) {
-                result[key] = try parseConfigValue(value, expectedType: field.fieldType)
+            if let field = nameToField[key], let canonicalKey = idToCanonicalPath[field.id] {
+                result[canonicalKey] = try parseConfigValue(value, expectedKind: field.kind)
+            } else if let field = pathToField[key], let canonicalKey = idToCanonicalPath[field.id] {
+                result[canonicalKey] = try parseConfigValue(value, expectedKind: field.kind)
             } else {
                 // Preserve unknown keys by inferring a reasonable ConfigValue.
                 result[key] = inferConfigValue(value)
@@ -341,28 +370,28 @@ class ConfigSerializer {
         return out
     }
     
-    private static func parseConfigValue(_ value: Any, expectedType: ConfigFieldType) throws -> ConfigValue {
-        switch expectedType {
-        case .string, .custom:
+    private static func parseConfigValue(_ value: Any, expectedKind: String) throws -> ConfigValue {
+        switch expectedKind.lowercased() {
+        case "string":
             if let str = value as? String {
                 return .string(str)
             }
-            
-        case .int:
+
+        case "int", "int64":
             if let int = value as? Int {
                 return .int(int)
             } else if let str = value as? String, let int = Int(str) {
                 return .int(int)
             }
-            
-        case .bool:
+
+        case "bool":
             if let bool = value as? Bool {
                 return .bool(bool)
             } else if let str = value as? String {
                 return .bool(str.lowercased() == "true")
             }
-            
-        case .double:
+
+        case "float64", "double":
             if let double = value as? Double {
                 return .double(double)
             } else if let int = value as? Int {
@@ -370,48 +399,46 @@ class ConfigSerializer {
             } else if let str = value as? String, let double = Double(str) {
                 return .double(double)
             }
-            
-        case .duration:
+
+        case "duration":
             if let str = value as? String {
                 return .duration(parseDuration(str))
             } else if let double = value as? Double {
                 return .duration(double)
             }
-            
-        case .stringArray:
+
+        case "[]string", "slice":
             if let array = value as? [String] {
                 return .stringArray(array)
             } else if let array = value as? [Any] {
                 let stringArray = array.compactMap { $0 as? String }
                 return .stringArray(stringArray)
             }
-            
-        case .array:
+
+        case "array":
             if let array = value as? [Any] {
-                let configArray = try array.map { try parseConfigValue($0, expectedType: .custom) }
+                let configArray = try array.map { try parseConfigValue($0, expectedKind: "string") }
                 return .array(configArray)
             }
-            
-        case .stringMap:
+
+        case "map":
             if let dict = value as? [String: String] {
                 return .stringMap(dict)
-            }
-            
-        case .map:
-            if let dict = value as? [String: Any] {
+            } else if let dict = value as? [String: Any] {
                 var configMap: [String: ConfigValue] = [:]
                 for (k, v) in dict {
-                    configMap[k] = try parseConfigValue(v, expectedType: .custom)
+                    configMap[k] = try parseConfigValue(v, expectedKind: "string")
                 }
                 return .map(configMap)
             }
-            
-        case .enum:
+
+        default:
+            // For unknown types, try to infer
             if let str = value as? String {
-                return .string(str) // Enums are stored as strings
+                return .string(str)
             }
         }
-        
+
         // Return null for unparseable values
         return .null
     }
@@ -482,29 +509,34 @@ class ConfigSerializer {
             
             // Parse receivers
             if let receiverNames = pipelineConfig["receivers"] as? [String] {
-                pipeline.receivers = receiverNames.compactMap { name in
-                    config.receivers.first { $0.instanceName == name }
-                }
+                pipeline.receivers = findComponentInstances(names: receiverNames, in: config)
             }
-            
+
             // Parse processors
             if let processorNames = pipelineConfig["processors"] as? [String] {
-                pipeline.processors = processorNames.compactMap { name in
-                    config.processors.first { $0.instanceName == name }
-                }
+                pipeline.processors = findComponentInstances(names: processorNames, in: config)
             }
-            
+
             // Parse exporters
             if let exporterNames = pipelineConfig["exporters"] as? [String] {
-                pipeline.exporters = exporterNames.compactMap { name in
-                    config.exporters.first { $0.instanceName == name }
-                }
+                pipeline.exporters = findComponentInstances(names: exporterNames, in: config)
             }
             
             pipelines.append(pipeline)
         }
         
         return pipelines
+    }
+
+    /// Find ComponentInstance objects by their names from the CollectorConfiguration
+    private static func findComponentInstances(names: [String], in config: CollectorConfiguration) -> [ComponentInstance] {
+        var instances: [ComponentInstance] = []
+        for name in names {
+            if let instance = config.allComponents.first(where: { $0.name == name }) {
+                instances.append(instance)
+            }
+        }
+        return instances
     }
 }
 

@@ -10,14 +10,12 @@ public class CollectorFileManager: LoggableComponent {
     var signposter: OSSignposter? { .fileSystem }
     
     let baseDirectory: URL
-    let templatesDirectory: URL
-    
+
     public init() {
         // Use explicit home directory path to avoid sandboxed container redirection
         let homeDir = URL(fileURLWithPath: NSHomeDirectory())
         self.baseDirectory = homeDir.appendingPathComponent(".locol")
-        self.templatesDirectory = Bundle.main.resourceURL?.appendingPathComponent("templates") ?? baseDirectory.appendingPathComponent("templates")
-        
+
         try? createDirectoryStructure()
     }
     
@@ -25,14 +23,6 @@ public class CollectorFileManager: LoggableComponent {
         // Create base directories
         try FileManager.default.createDirectory(at: baseDirectory.appendingPathComponent("collectors"), withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: baseDirectory.appendingPathComponent("bin"), withIntermediateDirectories: true)
-        
-        // Copy default templates if they don't exist
-        if let defaultConfig = Bundle.main.url(forResource: "defaultConfig", withExtension: "yaml", subdirectory: "templates") {
-            let destPath = baseDirectory.appendingPathComponent("collectors/default.yaml")
-            if !FileManager.default.fileExists(atPath: destPath.path) {
-                try FileManager.default.copyItem(at: defaultConfig, to: destPath)
-            }
-        }
     }
     
     func createCollectorDirectory(name: String, version: String) throws -> (binaryPath: String, configPath: String) {
@@ -52,29 +42,6 @@ public class CollectorFileManager: LoggableComponent {
         return (binPath.path, configPath.path)
     }
     
-    func listConfigTemplates() throws -> [URL] {
-        // Look for templates in the bundle's templates directory
-        if let bundleTemplatesPath = Bundle.main.resourceURL?.appendingPathComponent("templates") {
-            let contents = try FileManager.default.contentsOfDirectory(
-                at: bundleTemplatesPath,
-                includingPropertiesForKeys: nil,
-                options: [.skipsHiddenFiles]
-            )
-            return contents.filter { $0.pathExtension == "yaml" }
-        }
-        return []
-    }
-    
-    func applyConfigTemplate(named templateName: String, to collectorConfigPath: String) throws {
-        guard let templateURL = Bundle.main.url(forResource: templateName.replacingOccurrences(of: ".yaml", with: ""), 
-                                              withExtension: "yaml",
-                                              subdirectory: "templates") else {
-            throw FileError.templateNotFound
-        }
-        
-        let templateContent = try String(contentsOf: templateURL, encoding: .utf8)
-        try writeConfig(templateContent, to: collectorConfigPath)
-    }
     
     func handleDownloadedAsset(tempLocalURL: URL, assetName: String, destinationPath: String) throws -> String {
         let extractedPath = try extractTarGz(at: tempLocalURL)
@@ -227,7 +194,6 @@ public class CollectorFileManager: LoggableComponent {
 }
 
 enum FileError: Error {
-    case templateNotFound
     case binaryNameNotFound
     case binaryNotFound(String)
     case extractionFailed

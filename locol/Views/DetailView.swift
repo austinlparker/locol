@@ -1,4 +1,5 @@
 import SwiftUI
+import GRDBQuery
 
 struct DetailView: View {
     let item: SidebarItem?
@@ -26,10 +27,7 @@ struct DetailView: View {
                 
             case .dataGenerator:
                 DataGeneratorView()
-                
-            case .sqlQuery:
-                SQLQueryView(collectorName: container.viewer.selectedCollector, viewer: container.viewer)
-                
+            
             case nil:
                 ContentUnavailableView(
                     "Select an Item",
@@ -51,6 +49,7 @@ struct CollectorDetailView: View {
         PipelineDesignerView(collectorId: collectorId)
             .navigationTitle(record?.name ?? "Collector")
             .navigationSubtitle(record?.version ?? "")
+            .databaseContext(container.databaseContext!)
             .task {
                 if record == nil {
                     record = try? await container.collectorStore.getCollector(collectorId)

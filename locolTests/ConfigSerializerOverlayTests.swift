@@ -5,26 +5,22 @@ final class ConfigSerializerOverlayTests: XCTestCase {
     func testTelemetryOverlayInjection() throws {
         var cfg = CollectorConfiguration(version: "v0.100.0")
         // Add minimal component definitions and instances so service exists
-        let recvDef = ComponentDefinition(
+        let recvDef = Component(
             id: 1,
             name: "otlp",
             type: .receiver,
-            module: "otlp",
             description: nil,
-            structName: nil,
-            versionId: 1
+            version: "v0.100.0"
         )
-        let expDef = ComponentDefinition(
+        let expDef = Component(
             id: 2,
             name: "debug",
             type: .exporter,
-            module: "debug",
             description: nil,
-            structName: nil,
-            versionId: 1
+            version: "v0.100.0"
         )
-        let recv = ComponentInstance(definition: recvDef, instanceName: "otlp", configuration: [:])
-        let exp = ComponentInstance(definition: expDef, instanceName: "debug", configuration: [:])
+        let recv = ComponentInstance(component: recvDef, name: "otlp")
+        let exp = ComponentInstance(component: expDef, name: "debug")
         cfg.receivers = [recv]
         cfg.exporters = [exp]
         cfg.pipelines = [PipelineConfiguration(name: "traces", receivers: [recv], processors: [], exporters: [exp])]

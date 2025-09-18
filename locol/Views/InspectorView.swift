@@ -21,9 +21,6 @@ struct InspectorView: View {
                 case .dataGenerator:
                     DataGeneratorInspector()
 
-                case .sqlQuery:
-                    SQLQueryInspector()
-
                 case nil:
                     EmptyInspector()
                 }
@@ -42,26 +39,6 @@ struct CollectorInspector: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            // Component editor for Pipeline Designer selection
-            if let selected = container.selectedPipelineComponent {
-                Section {
-                    VStack(alignment: .leading) {
-                        Text("Component: \(selected.name)")
-                            .font(.subheadline)
-                            .foregroundColor(.secondary)
-                        Text("Type: \(selected.component.type.displayName)")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        Text("Component configuration editing is under development")
-                            .foregroundColor(.secondary)
-                            .italic()
-                    }
-                } header: {
-                    InspectorSectionHeader("COMPONENT")
-                }
-                Divider()
-            }
-
             // Component Library
             ComponentLibraryView()
         }
@@ -301,15 +278,6 @@ struct DataGeneratorInspector: View {
     var body: some View {
         InspectorSection("DATA GENERATOR") {
             Text("Data generator configuration")
-                .foregroundColor(.secondary)
-        }
-    }
-}
-
-struct SQLQueryInspector: View {
-    var body: some View {
-        InspectorSection("SQL QUERY") {
-            Text("SQL query configuration")
                 .foregroundColor(.secondary)
         }
     }

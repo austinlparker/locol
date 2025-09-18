@@ -26,6 +26,31 @@ final class TelemetryViewer {
     
     /// Last query execution error
     private(set) var lastQueryError: Error?
+
+    /// Trace summaries for explorer view
+    private(set) var traceSummaries: [TraceSummary] = []
+    private(set) var isLoadingTraceSummaries = false
+    private(set) var traceSummariesError: Error?
+    var selectedTraceId: String? = nil
+    private(set) var traceSpans: [TraceSpanDetail] = []
+    private(set) var isLoadingTraceDetail = false
+    private(set) var traceDetailError: Error?
+
+    /// Metric catalog and series state
+    private(set) var metricCatalog: [MetricDescriptor] = []
+    private(set) var isLoadingMetricCatalog = false
+    private(set) var metricCatalogError: Error?
+    var selectedMetric: MetricDescriptor? = nil
+    var metricTimeRange: MetricTimeRange = .lastHour
+    private(set) var metricSeries: [MetricDataPoint] = []
+    private(set) var isLoadingMetricSeries = false
+    private(set) var metricSeriesError: Error?
+
+    /// Logs state
+    private(set) var logEntries: [LogEntry] = []
+    private(set) var isLoadingLogs = false
+    private(set) var logsError: Error?
+    var logSeverity: LogSeverityFilter = .all
     
     init(storage: TelemetryStorageProtocol) {
         self.storage = storage
@@ -87,6 +112,141 @@ final class TelemetryViewer {
             logger.info("Cleared data for collector: \(collectorName)")
         } catch {
             logger.error("Failed to clear data for collector \(collectorName): \(error)")
+        }
+    }
+
+    // MARK: - Trace Explorer
+
+    func refreshTraceSummaries(limit: Int = 50) async {
+        isLoadingTraceSummaries = true
+        traceSummariesError = nil
+        do {
+            let traces = try await storage.fetchRecentTraces(
+                limit: limit,
+                collector: collectorFilter
+            )
+            traceSummaries = traces
+            isLoadingTraceSummaries = false
+
+            if let currentSelection = selectedTraceId,
+               traces.contains(where: { $0.traceId == currentSelection }) {
+                // Keep existing selection
+            } else {
+                selectedTraceId = traces.first?.traceId
+            }
+
+            if let traceId = selectedTraceId {
+                await loadTraceDetail(traceId: traceId)
+            } else {
+                traceSpans = []
+                traceDetailError = nil
+            }
+        } catch {
+            traceSummaries = []
+            isLoadingTraceSummaries = false
+            traceSummariesError = error
+            traceSpans = []
+            traceDetailError = error
+        }
+    }
+
+    func loadTraceDetail(traceId: String) async {
+        selectedTraceId = traceId
+        isLoadingTraceDetail = true
+        traceDetailError = nil
+        do {
+            let spans = try await storage.fetchTraceSpans(traceId: traceId)
+            traceSpans = spans
+            isLoadingTraceDetail = false
+        } catch {
+            traceSpans = []
+            isLoadingTraceDetail = false
+            traceDetailError = error
+        }
+    }
+
+    // MARK: - Metric Explorer
+
+    func refreshMetricCatalog() async {
+        isLoadingMetricCatalog = true
+        metricCatalogError = nil
+        do {
+            let catalog = try await storage.fetchMetricCatalog(collector: collectorFilter)
+            metricCatalog = catalog
+            isLoadingMetricCatalog = false
+
+            if let currentSelection = selectedMetric,
+               let updated = catalog.first(where: { candidate in
+                    candidate.metricName == currentSelection.metricName &&
+                    candidate.type == currentSelection.type &&
+                    candidate.unit == currentSelection.unit
+               }) {
+                self.selectedMetric = updated
+            } else {
+                self.selectedMetric = catalog.first
+            }
+
+            if let metric = self.selectedMetric {
+                await loadMetricSeries(for: metric)
+            } else {
+                metricSeries = []
+                metricSeriesError = nil
+            }
+        } catch {
+            metricCatalog = []
+            isLoadingMetricCatalog = false
+            metricCatalogError = error
+            metricSeries = []
+            metricSeriesError = error
+        }
+    }
+
+    // MARK: - Log Explorer
+
+    func refreshLogs(limit: Int = 200) async {
+        isLoadingLogs = true
+        logsError = nil
+        do {
+            let entries = try await storage.fetchRecentLogs(
+                limit: limit,
+                collector: collectorFilter,
+                minimumSeverity: logSeverity.minimumSeverityNumber
+            )
+            logEntries = entries
+            isLoadingLogs = false
+        } catch {
+            logEntries = []
+            isLoadingLogs = false
+            logsError = error
+        }
+    }
+
+    func loadMetricSeries(for metric: MetricDescriptor, range: MetricTimeRange? = nil) async {
+        selectedMetric = metric
+        if let range {
+            metricTimeRange = range
+        }
+
+        isLoadingMetricSeries = true
+        metricSeriesError = nil
+
+        let timeRange = metricTimeRange
+        let end = Date()
+        let start = end.addingTimeInterval(-timeRange.duration)
+        do {
+            let series = try await storage.fetchMetricSeries(
+                metricName: metric.metricName,
+                collector: collectorFilter,
+                start: start,
+                end: end,
+                bucketSeconds: timeRange.bucketSeconds
+            )
+            metricSeries = series.sorted(by: { $0.timestamp < $1.timestamp })
+            isLoadingMetricSeries = false
+        } catch {
+            metricSeries = []
+            isLoadingMetricSeries = false
+            metricSeriesError = error
         }
     }
     
@@ -293,6 +453,10 @@ final class TelemetryViewer {
         let jsonData = try JSONSerialization.data(withJSONObject: jsonRows, options: .prettyPrinted)
         return String(data: jsonData, encoding: .utf8) ?? ""
     }
+
+    private var collectorFilter: String? {
+        selectedCollector == "all" ? nil : selectedCollector
+    }
 }
 
 // MARK: - Supporting Types
@@ -339,6 +503,65 @@ enum TelemetryViewerError: LocalizedError {
         switch self {
         case .noResultToExport:
             return "No query result available to export"
+        }
+    }
+}
+
+enum MetricTimeRange: String, CaseIterable, Identifiable, Sendable {
+    case last15Minutes
+    case lastHour
+    case last24Hours
+    
+    var id: String { rawValue }
+    
+    var title: String {
+        switch self {
+        case .last15Minutes: return "15m"
+        case .lastHour: return "1h"
+        case .last24Hours: return "24h"
+        }
+    }
+    
+    var duration: TimeInterval {
+        switch self {
+        case .last15Minutes: return 15 * 60
+        case .lastHour: return 60 * 60
+        case .last24Hours: return 24 * 60 * 60
+        }
+    }
+    
+    var bucketSeconds: Int {
+        switch self {
+        case .last15Minutes: return 30
+        case .lastHour: return 60
+        case .last24Hours: return 300
+        }
+    }
+}
+
+enum LogSeverityFilter: String, CaseIterable, Identifiable, Sendable {
+    case all
+    case infoAndAbove
+    case warnAndAbove
+    case errorAndAbove
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all: return "All"
+        case .infoAndAbove: return "Info+"
+        case .warnAndAbove: return "Warn+"
+        case .errorAndAbove: return "Error+"
+        }
+    }
+
+    var minimumSeverityNumber: Int? {
+        switch self {
+        case .all: return nil
+        case .infoAndAbove: return LogSeverityNumber.info.rawValue
+        case .warnAndAbove: return LogSeverityNumber.warn.rawValue
+        case .errorAndAbove: return LogSeverityNumber.error.rawValue
         }
     }
 }

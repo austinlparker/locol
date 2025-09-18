@@ -6,35 +6,31 @@ enum SidebarItem: Hashable {
     case otlpReceiver
     case telemetryViewer
     case dataGenerator
-    case sqlQuery
-    
+
     var id: String {
         switch self {
         case .collector(let id): return "collector-\(id.uuidString)"
         case .otlpReceiver: return "otlp-receiver"
         case .telemetryViewer: return "telemetry-viewer"
         case .dataGenerator: return "data-generator"
-        case .sqlQuery: return "sql-query"
         }
     }
-    
+
     var title: String {
         switch self {
         case .collector: return "Collector"
         case .otlpReceiver: return "OTLP Receiver"
         case .telemetryViewer: return "Telemetry Viewer"
         case .dataGenerator: return "Data Generator"
-        case .sqlQuery: return "SQL Query"
         }
     }
-    
+
     var iconName: String {
         switch self {
         case .collector: return "server.rack"
         case .otlpReceiver: return "antenna.radiowaves.left.and.right"
         case .telemetryViewer: return "chart.line.uptrend.xyaxis"
         case .dataGenerator: return "waveform.path.ecg"
-        case .sqlQuery: return "terminal"
         }
     }
 }

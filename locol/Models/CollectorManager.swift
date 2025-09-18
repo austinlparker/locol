@@ -79,7 +79,7 @@ class CollectorManager {
         }
         var typedConfig = origConfig
         // Runtime validation: ensure OTLP receiver has at least one protocol
-        if let idx = typedConfig.receivers.firstIndex(where: { $0.instanceName.split(separator: "/").first == "otlp" }) {
+        if let idx = typedConfig.receivers.firstIndex(where: { $0.name.split(separator: "/").first == "otlp" }) {
             var inst = typedConfig.receivers[idx]
             let hasProtocols: Bool
             if case let .map(protoMap)? = inst.configuration["protocols"] {
@@ -144,19 +144,22 @@ class CollectorManager {
         downloadStatus = "Creating collector directory..."
         downloadProgress = 0.0
         
-        // Create the directory and copy default config
+        // Create the directory and default typed configuration
         do {
             let (binaryPath, configPath) = try fileManager.createCollectorDirectory(name: name, version: version)
-            
-            // Load and write the default configuration from templates
-            guard let templateURL = Bundle.main.url(forResource: "default", withExtension: "yaml", subdirectory: "templates"),
-                  let defaultConfig = try? String(contentsOf: templateURL, encoding: .utf8) else {
-                throw NSError(domain: "io.aparker.locol", code: 1, userInfo: [
-                    NSLocalizedDescriptionKey: "Could not load default template"
-                ])
+
+            // Create default typed configuration
+            let defaultConfig = createDefaultConfiguration(version: version)
+
+            // Generate YAML from typed config and write to file
+            do {
+                let yamlContent = try ConfigSerializer.generateYAML(from: defaultConfig)
+                try yamlContent.write(to: URL(fileURLWithPath: configPath), atomically: true, encoding: .utf8)
+                logger.debug("Successfully wrote default configuration to \(configPath)")
+            } catch {
+                logger.error("Failed to generate YAML from default config: \(error)")
+                throw error
             }
-            
-            try defaultConfig.write(to: URL(fileURLWithPath: configPath), atomically: true, encoding: .utf8)
             
             // Then download the asset
             downloadStatus = "Downloading collector binary..."
@@ -187,14 +190,12 @@ class CollectorManager {
             if let store = collectorStore {
                 Task {
                     do {
-                        let yaml = try String(contentsOfFile: downloadedConfigPath, encoding: .utf8)
-                        let typed = try await ConfigSerializer.parseYAML(yaml, version: version)
                         _ = try await store.createCollector(
                             id: UUID(),
                             name: name,
                             version: version,
                             binaryPath: downloadedBinaryPath,
-                            defaultConfig: typed
+                            defaultConfig: defaultConfig
                         )
                     } catch {
                         self.logger.error("Failed to persist collector to store: \(error.localizedDescription)")
@@ -338,28 +339,6 @@ class CollectorManager {
         isLoadingReleases = false
     }
     
-    func listConfigTemplates() -> [URL] {
-        do {
-            return try fileManager.listConfigTemplates()
-        } catch {
-            handleError(error, context: "Failed to list config templates")
-            return []
-        }
-    }
-    
-    func applyConfigTemplate(named templateName: String, toCollectorWithId id: UUID) {
-        Task { [weak self] in
-            guard let self else { return }
-            guard let record = try? await self.collectorStore?.getCollector(id) else { return }
-            let configPath = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".locol/collectors/\(record.name)/config.yaml").path
-            do {
-                try self.fileManager.applyConfigTemplate(named: templateName, to: configPath)
-            } catch {
-                self.handleError(error, context: "Failed to apply template")
-            }
-        }
-    }
     
     
     func refreshCollectorComponents(withId id: UUID) async throws {
@@ -369,8 +348,62 @@ class CollectorManager {
         _ = try await processManager.getCollectorComponents(instance)
     }
     
+    // MARK: - Configuration Creation
+
+    private func createDefaultConfiguration(version: String) -> CollectorConfiguration {
+        let database = ComponentDatabase()
+
+        // Look up components from database
+        guard let otlpComponent = database.getComponent(name: "otlp", type: .receiver),
+              let batchComponent = database.getComponent(name: "batch", type: .processor),
+              let debugComponent = database.getComponent(name: "debug", type: .exporter) else {
+            logger.error("Failed to find required components in database")
+            // Fallback to empty config if components not found
+            return CollectorConfiguration(version: version)
+        }
+
+        // Create OTLP receiver instance with configuration
+        var otlpReceiver = ComponentInstance(component: otlpComponent, name: "otlp")
+        otlpReceiver.configuration = [
+            "protocols": .map([
+                "grpc": .map([
+                    "endpoint": .string("localhost:4317")
+                ]),
+                "http": .map([
+                    "endpoint": .string("localhost:4318")
+                ])
+            ])
+        ]
+
+        // Create batch processor instance
+        let batchProcessor = ComponentInstance(component: batchComponent, name: "batch")
+
+        // Create debug exporter instance with configuration
+        var debugExporter = ComponentInstance(component: debugComponent, name: "debug")
+        debugExporter.configuration = [
+            "verbosity": .string("detailed")
+        ]
+
+        // Create default pipeline
+        let defaultPipeline = PipelineConfiguration(
+            name: "traces",
+            receivers: [otlpReceiver],
+            processors: [batchProcessor],
+            exporters: [debugExporter]
+        )
+
+        var config = CollectorConfiguration(version: version)
+        config.receivers = [otlpReceiver]
+        config.processors = [batchProcessor]
+        config.exporters = [debugExporter]
+        config.extensions = []
+        config.connectors = []
+        config.pipelines = [defaultPipeline]
+        return config
+    }
+
     // MARK: - Lifecycle Management
-    
+
     // Centralized cleanup method that uses async/await
     func cleanupOnTermination() async {
         logger.info("Application terminating, stopping all collectors")
